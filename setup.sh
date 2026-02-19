@@ -11,8 +11,6 @@ NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-MCP_SERVER_SHA="b66b56f33fc99cf359cc797c4591589323d0ccc5"
-
 MCP_DIR="$HOME/.claude-mcp-servers/multi-ai-collab"
 CLAUDE_DIR="$HOME/.claude"
 
@@ -116,28 +114,27 @@ else
 fi
 echo -e "${GREEN}  Claude Code CLI available${NC}"
 
-# -- Step 1: Clone MCP bridge server ------------------------------------------
+# -- Step 1: Install enhanced MCP server (from this repo) --------------------
 echo ""
-echo "Step 1: Installing MCP bridge server..."
-if [ -d "$MCP_DIR/.git" ]; then
-    echo -e "${YELLOW}  MCP server already installed at $MCP_DIR${NC}"
-else
-    if [ -d "$MCP_DIR" ]; then
-        echo -e "${YELLOW}  Existing directory found (not a git repo). Backing up...${NC}"
-        mv "$MCP_DIR" "$MCP_DIR.bak.$(date +%s)"
-    fi
-    git clone --quiet https://github.com/RaiAnsar/claude_code-multi-AI-MCP.git "$MCP_DIR"
-fi
-git -C "$MCP_DIR" checkout --quiet "$MCP_SERVER_SHA"
+echo "Step 1: Installing enhanced MCP server (v2 with bidirectional learning)..."
+mkdir -p "$MCP_DIR"
 
-# Validate the cloned server has expected files
-for expected_file in server.py credentials.template.json; do
+# Copy server modules from this repo
+for src_file in server.py memory.py sessions.py context_builder.py __init__.py credentials.template.json; do
+    cp "$SCRIPT_DIR/server/$src_file" "$MCP_DIR/$src_file"
+done
+
+# Create memory directories
+mkdir -p "$MCP_DIR/memory/sessions"
+
+# Validate installed files
+for expected_file in server.py memory.py sessions.py context_builder.py; do
     if [ ! -f "$MCP_DIR/$expected_file" ]; then
-        echo -e "${RED}  Expected file $expected_file not found in MCP server. The pinned commit may be invalid.${NC}"
+        echo -e "${RED}  Expected file $expected_file not found after copy. Check server/ directory.${NC}"
         exit 1
     fi
 done
-echo -e "${GREEN}  MCP server installed (pinned to ${MCP_SERVER_SHA:0:7})${NC}"
+echo -e "${GREEN}  Enhanced MCP server v2 installed${NC}"
 
 # -- Step 2: Create venv and install dependencies -----------------------------
 echo ""
@@ -165,7 +162,7 @@ if [ -f "$CREDS_FILE" ] && ! grep -q "YOUR_.*_KEY_HERE" "$CREDS_FILE" 2>/dev/nul
     echo -e "${YELLOW}  Credentials already configured. Skipping.${NC}"
     echo "  Edit $CREDS_FILE to change API keys."
 else
-    cp "$MCP_DIR/credentials.template.json" "$CREDS_FILE"
+    cp "$SCRIPT_DIR/server/credentials.template.json" "$CREDS_FILE"
     echo ""
     echo -e "${BLUE}Which AI do you want to configure? (You can add more later)${NC}"
     echo "  1) Grok (xAI)     -- \$0.20/M tokens with grok-4-1-fast-reasoning"
@@ -183,30 +180,16 @@ else
     esac
 fi
 
-# -- Step 4: Apply Windows UTF-8 fix ------------------------------------------
-if [[ "$(uname -s)" == *MINGW* ]] || [[ "$(uname -s)" == *MSYS* ]] || [[ "$(uname -r)" == *microsoft* ]]; then
-    echo ""
-    echo "Step 4: Applying Windows UTF-8 fix..."
-    SERVER_PY="$MCP_DIR/server.py"
-    if grep -q "sys.stdout = os.fdopen" "$SERVER_PY" 2>/dev/null; then
-        sed -i "s|sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)|sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1, encoding='utf-8', errors='replace')|" "$SERVER_PY"
-        sed -i "s|sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)|sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1, encoding='utf-8', errors='replace')|" "$SERVER_PY"
-        echo -e "${GREEN}  UTF-8 fix applied${NC}"
-    else
-        echo -e "${YELLOW}  UTF-8 fix already applied or not needed${NC}"
-    fi
-fi
-
-# -- Step 5: Register MCP server globally -------------------------------------
+# -- Step 4: Register MCP server globally -------------------------------------
 echo ""
-echo "Step 5: Registering MCP server..."
+echo "Step 4: Registering MCP server..."
 "${CLAUDE_CMD[@]}" mcp remove multi-ai-collab 2>/dev/null || true
 "${CLAUDE_CMD[@]}" mcp add --scope user --transport stdio multi-ai-collab -- "$VENV_PYTHON" "$MCP_DIR/server.py"
 echo -e "${GREEN}  MCP server registered globally (using venv Python)${NC}"
 
-# -- Step 6: Install template files --------------------------------------------
+# -- Step 5: Install template files --------------------------------------------
 echo ""
-echo "Step 6: Installing AI team defaults..."
+echo "Step 5: Installing AI team defaults..."
 mkdir -p "$CLAUDE_DIR"
 
 if [ -f "$CLAUDE_DIR/CLAUDE.md" ]; then
@@ -231,7 +214,14 @@ fi
 
 # -- Done ---------------------------------------------------------------------
 echo ""
-echo -e "${GREEN}Setup complete!${NC}"
+echo -e "${GREEN}Setup complete! (v2 — Bidirectional Learning)${NC}"
+echo ""
+echo "New in v2:"
+echo "  - Grok has persistent memory across sessions"
+echo "  - Bidirectional learning: both AIs learn from each other"
+echo "  - Multi-turn collaboration sessions (grok_collaborate)"
+echo "  - Grok as agent for independent task execution (grok_execute_task)"
+echo "  - Memory sync between Claude and Grok (grok_memory_sync)"
 echo ""
 echo "Next steps:"
 echo "  1. Restart VS Code (or open a new Claude Code CLI session)"
@@ -241,8 +231,9 @@ echo ""
 echo "Files installed:"
 echo "  ~/.claude/CLAUDE.md                            (global rules)"
 echo "  ~/.claude/ai-team-knowledge.md                 (global knowledge base)"
-echo "  ~/.claude-mcp-servers/multi-ai-collab/         (MCP server)"
+echo "  ~/.claude-mcp-servers/multi-ai-collab/         (MCP server v2)"
 echo "  ~/.claude-mcp-servers/multi-ai-collab/.venv/   (isolated Python env)"
+echo "  ~/.claude-mcp-servers/multi-ai-collab/memory/  (Grok's persistent memory)"
 echo ""
 echo "To add more AI providers later:"
 echo "  Edit ~/.claude-mcp-servers/multi-ai-collab/credentials.json"

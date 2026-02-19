@@ -31,10 +31,6 @@ function Read-HostMasked {
     }
 }
 
-# Pinned commit of the upstream MCP bridge server (RaiAnsar/claude_code-multi-AI-MCP).
-# Update this SHA when upgrading to a newer version.
-$MCP_SERVER_SHA = "b66b56f33fc99cf359cc797c4591589323d0ccc5"
-
 $mcpDir = Join-Path $env:USERPROFILE ".claude-mcp-servers\multi-ai-collab"
 $claudeDir = Join-Path $env:USERPROFILE ".claude"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -138,31 +134,32 @@ if (-not $claudeCmd) {
 }
 Write-Host "  Claude Code CLI available" -ForegroundColor Green
 
-# ── Step 1: Clone MCP bridge server (pinned to known-good commit) ─────
+# ── Step 1: Install enhanced MCP server (from this repo) ──────────────
 Write-Host ""
-Write-Host "Step 1: Installing MCP bridge server..." -ForegroundColor Yellow
-if (Test-Path (Join-Path $mcpDir ".git")) {
-    Write-Host "  MCP server already installed." -ForegroundColor DarkYellow
-} else {
-    if (Test-Path $mcpDir) {
-        $backupDir = "$mcpDir.bak.$(Get-Date -Format 'yyyyMMddHHmmss')"
-        Write-Host "  Existing directory found (not a git repo). Backing up to $backupDir..." -ForegroundColor DarkYellow
-        Rename-Item $mcpDir $backupDir
-    }
-    git clone --quiet https://github.com/RaiAnsar/claude_code-multi-AI-MCP.git $mcpDir
-}
-# Pin to a known-good commit for reproducibility and supply-chain safety.
-git -C $mcpDir checkout --quiet $MCP_SERVER_SHA
-$shortSha = $MCP_SERVER_SHA.Substring(0, 7)
+Write-Host "Step 1: Installing enhanced MCP server (v2 with bidirectional learning)..." -ForegroundColor Yellow
 
-# Validate the cloned server has expected files
-foreach ($expectedFile in @("server.py", "credentials.template.json")) {
+if (-not (Test-Path $mcpDir)) { New-Item -ItemType Directory -Path $mcpDir -Force | Out-Null }
+
+# Copy server modules from this repo
+$serverSrcDir = Join-Path $scriptDir "server"
+foreach ($srcFile in @("server.py", "memory.py", "sessions.py", "context_builder.py", "__init__.py", "credentials.template.json")) {
+    Copy-Item (Join-Path $serverSrcDir $srcFile) (Join-Path $mcpDir $srcFile) -Force
+}
+
+# Create memory directories
+$memoryDir = Join-Path $mcpDir "memory"
+$sessionsDir = Join-Path $memoryDir "sessions"
+if (-not (Test-Path $memoryDir)) { New-Item -ItemType Directory -Path $memoryDir -Force | Out-Null }
+if (-not (Test-Path $sessionsDir)) { New-Item -ItemType Directory -Path $sessionsDir -Force | Out-Null }
+
+# Validate installed files
+foreach ($expectedFile in @("server.py", "memory.py", "sessions.py", "context_builder.py")) {
     if (-not (Test-Path (Join-Path $mcpDir $expectedFile))) {
-        Write-Host "  Expected file $expectedFile not found in MCP server. The pinned commit may be invalid." -ForegroundColor Red
+        Write-Host "  Expected file $expectedFile not found after copy. Check server/ directory." -ForegroundColor Red
         exit 1
     }
 }
-Write-Host "  MCP server installed (pinned to $shortSha)" -ForegroundColor Green
+Write-Host "  Enhanced MCP server v2 installed" -ForegroundColor Green
 
 # ── Step 2: Create venv and install Python dependencies ────────────────
 Write-Host ""
@@ -192,7 +189,7 @@ Write-Host "  Dependencies installed into $venvDir" -ForegroundColor Green
 Write-Host ""
 Write-Host "Step 3: Configuring AI credentials..." -ForegroundColor Yellow
 $credsFile = Join-Path $mcpDir "credentials.json"
-$templateFile = Join-Path $mcpDir "credentials.template.json"
+$templateFile = Join-Path $scriptDir "server\credentials.template.json"
 
 $needsConfig = $true
 if (Test-Path $credsFile) {
@@ -272,23 +269,10 @@ if ($needsConfig) {
     }
 }
 
-# ── Step 4: Apply Windows UTF-8 fix ───────────────────────────────────
+# ── Step 4: Register MCP server globally ───────────────────────────────
 Write-Host ""
-Write-Host "Step 4: Applying Windows UTF-8 fix..." -ForegroundColor Yellow
+Write-Host "Step 4: Registering MCP server..." -ForegroundColor Yellow
 $serverPy = Join-Path $mcpDir "server.py"
-$serverContent = Get-Content $serverPy -Raw
-if ($serverContent -match "sys\.stdout = os\.fdopen\(sys\.stdout\.fileno\(\), 'w', 1\)") {
-    $serverContent = $serverContent -replace "sys\.stdout = os\.fdopen\(sys\.stdout\.fileno\(\), 'w', 1\)", "sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1, encoding='utf-8', errors='replace')"
-    $serverContent = $serverContent -replace "sys\.stderr = os\.fdopen\(sys\.stderr\.fileno\(\), 'w', 1\)", "sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1, encoding='utf-8', errors='replace')"
-    Set-Content $serverPy -Value $serverContent -NoNewline
-    Write-Host "  UTF-8 fix applied" -ForegroundColor Green
-} else {
-    Write-Host "  UTF-8 fix already applied or not needed" -ForegroundColor DarkYellow
-}
-
-# ── Step 5: Register MCP server globally ───────────────────────────────
-Write-Host ""
-Write-Host "Step 5: Registering MCP server..." -ForegroundColor Yellow
 if ($claudeCmd -eq "npx") {
     & npx @anthropic-ai/claude-code mcp remove multi-ai-collab 2>$null
     & npx @anthropic-ai/claude-code mcp add --scope user --transport stdio multi-ai-collab -- $venvPython $serverPy
@@ -298,9 +282,9 @@ if ($claudeCmd -eq "npx") {
 }
 Write-Host "  MCP server registered globally (using venv Python)" -ForegroundColor Green
 
-# ── Step 6: Install default config files ───────────────────────────────
+# ── Step 5: Install default config files ───────────────────────────────
 Write-Host ""
-Write-Host "Step 6: Installing AI team defaults..." -ForegroundColor Yellow
+Write-Host "Step 5: Installing AI team defaults..." -ForegroundColor Yellow
 
 if (-not (Test-Path $claudeDir)) { New-Item -ItemType Directory -Path $claudeDir | Out-Null }
 
@@ -329,7 +313,14 @@ if (-not (Test-Path $knowledgeBase)) {
 
 # ── Done ───────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "Setup complete!" -ForegroundColor Green
+Write-Host "Setup complete! (v2 — Bidirectional Learning)" -ForegroundColor Green
+Write-Host ""
+Write-Host "New in v2:" -ForegroundColor Cyan
+Write-Host "  - Grok has persistent memory across sessions"
+Write-Host "  - Bidirectional learning: both AIs learn from each other"
+Write-Host "  - Multi-turn collaboration sessions (grok_collaborate)"
+Write-Host "  - Grok as agent for independent task execution (grok_execute_task)"
+Write-Host "  - Memory sync between Claude and Grok (grok_memory_sync)"
 Write-Host ""
 Write-Host "Next steps:"
 Write-Host "  1. Restart VS Code (or open a new Claude Code CLI session)"
@@ -339,8 +330,9 @@ Write-Host ""
 Write-Host "Files installed:"
 Write-Host "  ~/.claude/CLAUDE.md                            (global rules)"
 Write-Host "  ~/.claude/ai-team-knowledge.md                 (global knowledge base)"
-Write-Host "  ~/.claude-mcp-servers/multi-ai-collab/         (MCP server)"
+Write-Host "  ~/.claude-mcp-servers/multi-ai-collab/         (MCP server v2)"
 Write-Host "  ~/.claude-mcp-servers/multi-ai-collab/.venv/   (isolated Python env)"
+Write-Host "  ~/.claude-mcp-servers/multi-ai-collab/memory/  (Grok's persistent memory)"
 Write-Host ""
 Write-Host "To add more AI providers later:"
 Write-Host "  Edit ~/.claude-mcp-servers/multi-ai-collab/credentials.json"

@@ -7,10 +7,11 @@
 ## Protocol (ALWAYS follow)
 
 1. **Read this file + `~/.claude/ai-team-knowledge.md`** at the start of any task.
-2. **After completing significant work**, append project-specific context HERE and general learnings to the GLOBAL file.
-3. **Reference prior learnings explicitly** in your reasoning when relevant.
-4. **Never delete entries** — only append or annotate with corrections.
-5. **Keep entries concise** — 2-4 lines max per lesson. Link to files/commits for details.
+2. **Sync with Grok**: Call `grok_memory_sync(action="pull")` to get Grok's latest learnings, then `grok_memory_sync(action="push")` to share Claude's.
+3. **After completing significant work**, append project-specific context HERE, general learnings to the GLOBAL file, AND sync to Grok via `grok_memory_sync(action="push")`.
+4. **Reference prior learnings explicitly** in your reasoning when relevant.
+5. **Never delete entries** — only append or annotate with corrections.
+6. **Keep entries concise** — 2-4 lines max per lesson. Link to files/commits for details.
 
 ---
 
@@ -38,6 +39,13 @@ Use Grok as a **gut-check agent** in these scenarios:
 - **Debugging dead-ends**: When stuck for >2 attempts on the same bug, ask `grok_debug` for a fresh perspective.
 - **Domain knowledge**: Grok may have different training data — consult on ambiguous questions.
 - **Trade-off analysis**: Use `grok_think_deep` when evaluating competing approaches.
+
+### v2 Collaboration Tools
+- **`grok_collaborate`**: Multi-turn sessions where both AIs iterate toward an agreed solution. Use for architecture decisions, complex debugging, design reviews.
+- **`grok_execute_task`**: Give Grok a task to solve independently as an agent. Grok returns structured results (code, plans, reviews) that Claude reviews and applies.
+- **`grok_memory_sync`**: Push Claude's learnings to Grok (`push`), pull Grok's learnings (`pull`), or check status (`status`).
+- **`grok_session_end`**: End a collaboration session and extract learnings from the full conversation.
+- **`grok_memory_status`**: View Grok's memory state (learning counts, projects, categories).
 
 Do NOT use Grok for:
 - Trivial tasks (simple file edits, formatting, obvious fixes)

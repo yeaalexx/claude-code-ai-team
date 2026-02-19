@@ -1,15 +1,18 @@
 # Claude Code AI Team
 
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 
-**Persistent multi-AI collaboration for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — make Claude and Grok (or other AIs) work together with shared memory that never forgets.**
+**Bidirectional AI collaboration for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Claude and Grok learn from each other, collaborate on solutions, and build shared knowledge that persists forever.**
 
-Claude Code is powerful on its own. But sometimes you want a second opinion — an independent code review, a gut-check on architecture, a fresh perspective on a stubborn bug. This setup gives Claude Code a teammate.
+Claude Code is powerful on its own. But sometimes you want a second opinion — an independent code review, a gut-check on architecture, a fresh perspective on a stubborn bug. This setup gives Claude Code a teammate that *remembers* and *learns*.
 
 ## What This Does
 
-- **Claude + Grok as a team**: Claude Code can call Grok (xAI) for code review, architecture advice, debugging help, brainstorming, and deep analysis — all from within your editor
-- **Persistent cross-project memory**: Learnings from any project automatically benefit all future projects via a global knowledge base
+- **Bidirectional learning**: Both Claude and Grok have persistent memory — they learn from each interaction and carry knowledge forward
+- **Grok has memory**: Grok receives its accumulated learnings as context on every call. It also auto-extracts new learnings from its own responses.
+- **Multi-turn collaboration**: Claude and Grok can have iterative conversations (`grok_collaborate`) with consensus detection — they work toward agreed solutions
+- **Grok as agent**: Give Grok independent tasks (`grok_execute_task`) and get back structured code, plans, or reviews
+- **Persistent cross-project memory**: Learnings from any project automatically benefit all future projects for *both* AIs
 - **Per-project context**: Each project gets its own `AI_TEAM_SYNERGY.md` that's auto-created on first use
 - **Auto-fallback on billing exhaustion**: When xAI credits run out, Claude seamlessly continues solo — no workflow interruption
 - **Zero-config for new projects**: Global rules auto-bootstrap collaboration files in every project you open
@@ -18,35 +21,40 @@ Claude Code is powerful on its own. But sometimes you want a second opinion — 
 
 ```
 Global (shared across all projects):
-  ~/.claude/CLAUDE.md                           <-- Global rules (auto-bootstrap, collaboration, fallback)
-  ~/.claude/ai-team-knowledge.md                <-- Global brain (cross-project learnings)
-  ~/.claude.json                                <-- MCP server registration (user scope)
-  ~/.claude-mcp-servers/multi-ai-collab/        <-- MCP bridge server (pinned commit) + credentials
-  ~/.claude-mcp-servers/multi-ai-collab/.venv/  <-- Isolated Python environment
+  ~/.claude/CLAUDE.md                                    <-- Global rules (collaboration, sync, fallback)
+  ~/.claude/ai-team-knowledge.md                         <-- Claude's brain (cross-project learnings)
+  ~/.claude.json                                         <-- MCP server registration (user scope)
+  ~/.claude-mcp-servers/multi-ai-collab/                 <-- Enhanced MCP server v2
+  ~/.claude-mcp-servers/multi-ai-collab/.venv/           <-- Isolated Python environment
+  ~/.claude-mcp-servers/multi-ai-collab/memory/
+      +-- grok-memory.json                               <-- Grok's brain (persistent memory)
+      +-- sessions/                                      <-- Collaboration session transcripts
 
 Per project (auto-created by Claude):
   ~/projects/any-project/
       +-- AI_TEAM_SYNERGY.md              <-- Project-specific AI team knowledge
       +-- CLAUDE.md                       <-- Project conventions (AI team section auto-added)
-
-  ~/projects/another-project/
-      +-- AI_TEAM_SYNERGY.md              <-- Auto-created, inherits global learnings
 ```
 
-### Knowledge Flow
+### Knowledge Flow (Bidirectional)
 
 ```
-Project A learns something (e.g., "Grok caught a race condition pattern")
-        |
-        +---> AI_TEAM_SYNERGY.md    (Project A only)
-        |
-        +---> ai-team-knowledge.md  (GLOBAL -- all projects benefit)
-
-Project B starts
-        |
-        +---> Reads ai-team-knowledge.md (gets Project A's learnings automatically)
-        |
-        +---> Creates its own AI_TEAM_SYNERGY.md (Project B context)
+Claude discovers insight              Grok discovers insight
+        |                                      |
+        v                                      v
+ai-team-knowledge.md              [LEARNING] block in response
+  (Claude writes)                   (server auto-extracts)
+        |                                      |
+        v                                      v
+grok_memory_sync(push) -----> grok-memory.json <---- auto-saved
+                                    |
+                             next Grok call:
+                             context_builder injects
+                             relevant learnings into
+                             Grok's system prompt
+                                    |
+                                    v
+                          BOTH AIs now have the learning
 ```
 
 ## Prerequisites
@@ -79,23 +87,22 @@ cd claude-code-ai-team
 ```
 
 The setup script will:
-1. Clone the MCP bridge server and pin it to a known-good commit
+1. Install the enhanced MCP server v2 (from this repo's `server/` directory)
 2. Create an isolated Python venv and install pinned dependencies
-3. Prompt for your API key(s) and secure the credentials file
-4. Register the MCP server globally (using the venv Python)
-5. Install the global `CLAUDE.md` and knowledge base defaults
-6. Apply the Windows UTF-8 fix (if on Windows)
+3. Create Grok's memory directory (`memory/grok-memory.json`)
+4. Prompt for your API key(s) and secure the credentials file
+5. Register the MCP server globally (using the venv Python)
+6. Install the global `CLAUDE.md` and knowledge base defaults
 
 ### Option B: Manual Setup
 
 <details>
 <summary>Click to expand manual steps</summary>
 
-#### 1. Clone the MCP bridge server
+#### 1. Copy the enhanced server
 ```bash
-git clone https://github.com/RaiAnsar/claude_code-multi-AI-MCP.git ~/.claude-mcp-servers/multi-ai-collab
-cd ~/.claude-mcp-servers/multi-ai-collab
-git checkout b66b56f33fc99cf359cc797c4591589323d0ccc5
+mkdir -p ~/.claude-mcp-servers/multi-ai-collab/memory/sessions
+cp server/*.py server/credentials.template.json ~/.claude-mcp-servers/multi-ai-collab/
 ```
 
 #### 2. Create a venv and install dependencies
@@ -111,7 +118,7 @@ python3 -m venv ~/.claude-mcp-servers/multi-ai-collab/.venv
 
 #### 3. Configure credentials
 ```bash
-cp ~/.claude-mcp-servers/multi-ai-collab/credentials.template.json ~/.claude-mcp-servers/multi-ai-collab/credentials.json
+cp server/credentials.template.json ~/.claude-mcp-servers/multi-ai-collab/credentials.json
 ```
 
 Edit `~/.claude-mcp-servers/multi-ai-collab/credentials.json` and add your API key(s). Set `"enabled": true` for each AI you configure.
@@ -122,20 +129,7 @@ Secure the file:
 chmod 600 ~/.claude-mcp-servers/multi-ai-collab/credentials.json
 ```
 
-#### 4. Fix Windows encoding (Windows only)
-
-Open `~/.claude-mcp-servers/multi-ai-collab/server.py` and replace:
-```python
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)
-sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)
-```
-With:
-```python
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1, encoding='utf-8', errors='replace')
-sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1, encoding='utf-8', errors='replace')
-```
-
-#### 5. Register the MCP server
+#### 4. Register the MCP server
 
 Use the venv Python, not the system Python:
 ```bash
@@ -150,7 +144,7 @@ claude mcp add --scope user --transport stdio multi-ai-collab -- ^
   %USERPROFILE%\.claude-mcp-servers\multi-ai-collab\server.py
 ```
 
-#### 6. Install defaults
+#### 5. Install defaults
 
 Copy the default config files to your Claude config:
 ```bash
@@ -182,7 +176,8 @@ Check the server status for the multi-ai-collab MCP
 |------|----------|---------|
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` | Global rules: auto-bootstrap, collaboration protocol, MCP fallback |
 | `ai-team-knowledge.md` | `~/.claude/ai-team-knowledge.md` | Global knowledge base — learnings from all projects |
-| MCP server | `~/.claude-mcp-servers/multi-ai-collab/` | Bridge between Claude Code and external AIs (pinned to known-good commit) |
+| MCP server | `~/.claude-mcp-servers/multi-ai-collab/` | Enhanced MCP server v2 with bidirectional learning |
+| Grok memory | `~/.claude-mcp-servers/multi-ai-collab/memory/` | Grok's persistent memory and session transcripts |
 | Python venv | `~/.claude-mcp-servers/multi-ai-collab/.venv/` | Isolated Python environment (no global pip pollution) |
 | Credentials | `~/.claude-mcp-servers/multi-ai-collab/credentials.json` | Your API keys (local only, never committed) |
 | Cred helper | `scripts/update_creds.py` (in this repo) | Writes API keys to credentials.json via stdin |
@@ -197,42 +192,58 @@ Per-project files (auto-created by Claude on first task):
 
 Once installed, Claude Code gains these MCP tools:
 
+### Core Tools (per AI)
 | Tool | What it does |
 |------|-------------|
-| `ask_grok` | Ask Grok any question |
+| `ask_grok` | Ask Grok any question (with memory-aware context) |
 | `grok_code_review` | Independent code review (security, performance, readability) |
 | `grok_think_deep` | Extended reasoning on complex problems |
 | `grok_brainstorm` | Creative brainstorming with constraints |
 | `grok_debug` | Debugging help with error context |
 | `grok_architecture` | Architecture design advice |
-| `server_status` | Check which AIs are available |
+| `server_status` | Check which AIs are available + memory stats |
 
-If you enable multiple AIs, you also get: `ask_all_ais`, `ai_debate`, `collaborative_solve`, `ai_consensus`.
+### v2: Bidirectional Learning & Collaboration
+| Tool | What it does |
+|------|-------------|
+| `grok_collaborate` | Multi-turn sessions — both AIs iterate toward an agreed solution with consensus detection |
+| `grok_execute_task` | Grok works independently as an agent — returns structured code, plans, reviews, or diffs |
+| `grok_memory_sync` | Push Claude's learnings to Grok / pull Grok's learnings to Claude / check status |
+| `grok_session_end` | End a collaboration session and extract learnings from the full conversation |
+| `grok_memory_status` | View Grok's memory state (learning counts, categories, active sessions) |
+
+### Multi-AI Tools (when 2+ AIs enabled)
+`ask_all_ais`, `ai_debate`, `collaborative_solve`, `ai_consensus`
 
 ## How Collaboration Works in Practice
 
 The global `CLAUDE.md` instructs Claude Code to follow these collaboration guidelines. You don't need to explicitly invoke tools — Claude will:
 
-1. **Read the global knowledge base** at session start
+1. **Sync memory with Grok** at session start (pull Grok's learnings, push Claude's)
 2. **Auto-create `AI_TEAM_SYNERGY.md`** in new projects
 3. **Consult Grok** before major architecture decisions
 4. **Send code to Grok for review** after writing complex logic
-5. **Ask Grok for help** when stuck on debugging
-6. **Log learnings** to both the project and global knowledge bases
-7. **Fall back to solo mode** if Grok's API returns billing errors
+5. **Start collaboration sessions** for complex decisions requiring iteration
+6. **Delegate tasks to Grok** when independent work is beneficial
+7. **Log learnings to all three stores** (Claude's brain, Grok's brain, project brain)
+8. **Fall back to solo mode** if Grok's API returns billing errors
 
-> **Note:** These behaviors are driven by the `CLAUDE.md` instructions. Claude follows them as guidelines, so the degree of automation may vary between sessions. You can always invoke tools explicitly (e.g., "Ask Grok to review this code") for guaranteed collaboration.
+> **Note:** These behaviors are driven by the `CLAUDE.md` instructions. Claude follows them as guidelines, so the degree of automation may vary between sessions. You can always invoke tools explicitly for guaranteed collaboration.
 
 ### Example Prompts
 
 ```
 Ask Grok to review this authentication middleware for security issues
 
+Start a collaboration session with Grok to design the caching strategy
+
+Have Grok independently write the retry logic while I work on the API endpoints
+
 Get Grok's opinion on whether we should use WebSockets or SSE for real-time updates
 
 Have Grok debug this — I've tried 3 approaches and none work
 
-Ask Grok to brainstorm approaches for caching this expensive query
+Sync memory with Grok to make sure we're both up to date
 ```
 
 ## MCP Fallback (Billing Protection)
@@ -289,20 +300,21 @@ Edit `~/.claude/CLAUDE.md` to change when and how Claude consults Grok. For exam
 
 ## How It Differs from the Base MCP Server
 
-This project builds on [RaiAnsar/claude_code-multi-AI-MCP](https://github.com/RaiAnsar/claude_code-multi-AI-MCP) (the MCP bridge) and adds:
+Originally inspired by [RaiAnsar/claude_code-multi-AI-MCP](https://github.com/RaiAnsar/claude_code-multi-AI-MCP). v2 is a complete rewrite with bidirectional learning:
 
-| Feature | Base MCP Server | This Project |
-|---------|----------------|-------------|
-| Claude-to-Grok calls | Yes | Yes |
-| Persistent cross-project memory | No | Yes |
-| Auto-bootstrap in new projects | No | Yes |
-| Billing fallback protocol | No | Yes |
-| Global collaboration rules | No | Yes |
-| Per-project knowledge base | No | Yes |
-| Isolated Python venv | No | Yes |
-| Pinned upstream dependency | No | Yes |
-| Windows UTF-8 fix | No | Yes |
-| Cross-platform setup script | No | Yes |
+| Feature | Base MCP Server | v0.1 | v0.2 (Current) |
+|---------|----------------|------|----------------|
+| Claude-to-Grok calls | Yes | Yes | Yes |
+| Grok persistent memory | No | No | **Yes** |
+| Bidirectional learning | No | No | **Yes** |
+| Multi-turn collaboration | No | No | **Yes** |
+| Grok as agent | No | No | **Yes** |
+| Memory synchronization | No | No | **Yes** |
+| Consensus detection | No | No | **Yes** |
+| System prompt injection | No | No | **Yes** |
+| Persistent cross-project memory | No | Yes | Yes |
+| Auto-bootstrap in new projects | No | Yes | Yes |
+| Billing fallback protocol | No | Yes | Yes |
 
 ## Troubleshooting
 
@@ -313,9 +325,6 @@ claude mcp add --scope user --transport stdio multi-ai-collab -- \
   ~/.claude-mcp-servers/multi-ai-collab/.venv/bin/python \
   ~/.claude-mcp-servers/multi-ai-collab/server.py
 ```
-
-### Grok returns encoding errors on Windows
-Apply the UTF-8 fix to `server.py` (the setup script does this automatically).
 
 ### "command not found: claude"
 Install Claude Code CLI globally: `npm install -g @anthropic-ai/claude-code`
