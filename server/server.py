@@ -14,9 +14,10 @@ import os
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
-# Ensure unbuffered UTF-8 output (critical on Windows where default is cp1252)
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1, encoding='utf-8', errors='replace')
-sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1, encoding='utf-8', errors='replace')
+# Ensure UTF-8 output (critical on Windows where default is cp1252)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # Resolve import paths — works both as a package (server/) and flat install
 SCRIPT_DIR = Path(__file__).parent
