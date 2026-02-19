@@ -1,28 +1,9 @@
-name: Lint & Test
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
+# DEPRECATED: Replaced by ci.yml — this file can be deleted.
+# Keeping as empty to avoid GitHub referencing a missing workflow.
+name: "Legacy Lint (see ci.yml)"
+on: workflow_dispatch
 jobs:
-  shellcheck:
+  noop:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@2.0.0
-        with:
-          scandir: .
-          severity: warning
-
-  smoke-test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Run smoke tests
-        run: bash tests/smoke_test.sh
+      - run: echo "This workflow is deprecated. See ci.yml."

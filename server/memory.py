@@ -12,18 +12,16 @@ import json
 import os
 import re
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # Memory file location (set by server.py at startup)
-MEMORY_DIR: Optional[Path] = None
-MEMORY_FILE: Optional[Path] = None
+MEMORY_DIR: Path | None = None
+MEMORY_FILE: Path | None = None
 
 # In-memory cache
-_memory_cache: Optional[Dict[str, Any]] = None
+_memory_cache: dict[str, Any] | None = None
 _cache_timestamp: float = 0.0
 CACHE_TTL: float = 60.0  # seconds
 
@@ -44,7 +42,7 @@ def initialize(base_dir: Path) -> None:
         _write_memory_file(initial_memory)
 
 
-def _create_initial_memory() -> Dict[str, Any]:
+def _create_initial_memory() -> dict[str, Any]:
     """Create the initial empty memory structure."""
     return {
         "version": 1,
@@ -62,7 +60,7 @@ def _create_initial_memory() -> Dict[str, Any]:
             "style": (
                 "Direct, concise, opinionated. Disagree with Claude when you have "
                 "strong reasons. Flag risks Claude might miss. Offer alternatives."
-            )
+            ),
         },
         "learnings": [],
         "corrections": [],
@@ -72,12 +70,12 @@ def _create_initial_memory() -> Dict[str, Any]:
             "calls_by_tool": {},
             "learnings_count": 0,
             "corrections_count": 0,
-            "sessions_count": 0
-        }
+            "sessions_count": 0,
+        },
     }
 
 
-def _write_memory_file(memory: Dict[str, Any]) -> None:
+def _write_memory_file(memory: dict[str, Any]) -> None:
     """Write memory to disk atomically (write to temp, then rename)."""
     if MEMORY_FILE is None:
         return
@@ -88,7 +86,7 @@ def _write_memory_file(memory: Dict[str, Any]) -> None:
     os.replace(str(tmp_path), str(MEMORY_FILE))
 
 
-def load_memory() -> Dict[str, Any]:
+def load_memory() -> dict[str, Any]:
     """Load memory from disk with caching."""
     global _memory_cache, _cache_timestamp
 
@@ -116,7 +114,7 @@ def load_memory() -> Dict[str, Any]:
     return _memory_cache
 
 
-def save_memory(memory: Dict[str, Any]) -> None:
+def save_memory(memory: dict[str, Any]) -> None:
     """Save memory to disk and update cache."""
     global _memory_cache, _cache_timestamp
 
@@ -126,13 +124,7 @@ def save_memory(memory: Dict[str, Any]) -> None:
     _cache_timestamp = time.time()
 
 
-def add_learning(
-    source: str,
-    category: str,
-    content: str,
-    project: str = "",
-    confidence: float = 0.8
-) -> str:
+def add_learning(source: str, category: str, content: str, project: str = "", confidence: float = 0.8) -> str:
     """Add a learning to Grok's memory. Returns the learning ID."""
     memory = load_memory()
 
@@ -150,7 +142,7 @@ def add_learning(
         "project": project,
         "category": category,
         "content": content.strip(),
-        "confidence": confidence
+        "confidence": confidence,
     }
     memory["learnings"].append(learning)
     memory["statistics"]["learnings_count"] = len(memory["learnings"])
@@ -158,12 +150,7 @@ def add_learning(
     return learning_id
 
 
-def add_correction(
-    corrector: str,
-    original_claim: str,
-    correction: str,
-    category: str = "general"
-) -> str:
+def add_correction(corrector: str, original_claim: str, correction: str, category: str = "general") -> str:
     """Add a correction (when one AI corrects the other). Returns correction ID."""
     memory = load_memory()
     correction_id = f"C{len(memory['corrections']) + 1:04d}"
@@ -173,7 +160,7 @@ def add_correction(
         "corrector": corrector,
         "original_claim": original_claim.strip(),
         "correction": correction.strip(),
-        "category": category
+        "category": category,
     }
     memory["corrections"].append(entry)
     memory["statistics"]["corrections_count"] = len(memory["corrections"])
@@ -195,21 +182,17 @@ def update_project_context(project: str, tech_stack: str = "", summary: str = ""
     save_memory(memory)
 
 
-def query_learnings(
-    category: Optional[str] = None,
-    project: Optional[str] = None,
-    limit: int = 20
-) -> List[Dict[str, Any]]:
+def query_learnings(category: str | None = None, project: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
     """Query learnings filtered by category and/or project."""
     memory = load_memory()
     results = memory.get("learnings", [])
 
     if category and category != "all":
-        results = [l for l in results if l["category"] == category]
+        results = [r for r in results if r["category"] == category]
 
     if project:
         # Include both project-specific and general (no project) learnings
-        results = [l for l in results if l["project"] in ("", project)]
+        results = [r for r in results if r["project"] in ("", project)]
 
     # Sort by confidence (desc), then timestamp (desc)
     results.sort(key=lambda x: (x.get("confidence", 0.5), x.get("timestamp", "")), reverse=True)
@@ -217,7 +200,7 @@ def query_learnings(
     return results[:limit]
 
 
-def get_corrections(category: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+def get_corrections(category: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
     """Get recent corrections, optionally filtered by category."""
     memory = load_memory()
     results = memory.get("corrections", [])
@@ -226,13 +209,13 @@ def get_corrections(category: Optional[str] = None, limit: int = 10) -> List[Dic
     return results[-limit:]  # Most recent
 
 
-def get_memory_stats() -> Dict[str, Any]:
+def get_memory_stats() -> dict[str, Any]:
     """Get memory statistics."""
     memory = load_memory()
     learnings = memory.get("learnings", [])
-    categories = {}
-    for l in learnings:
-        cat = l.get("category", "uncategorized")
+    categories: dict[str, int] = {}
+    for entry in learnings:
+        cat = entry.get("category", "uncategorized")
         categories[cat] = categories.get(cat, 0) + 1
 
     return {
@@ -241,7 +224,7 @@ def get_memory_stats() -> Dict[str, Any]:
         "total_corrections": len(memory.get("corrections", [])),
         "projects": list(memory.get("project_contexts", {}).keys()),
         "last_updated": memory.get("last_updated", "never"),
-        "statistics": memory.get("statistics", {})
+        "statistics": memory.get("statistics", {}),
     }
 
 
@@ -259,12 +242,11 @@ def record_call(tool_name: str) -> None:
 
 # Pattern: [LEARNING category="..."] content [/LEARNING]
 _LEARNING_PATTERN = re.compile(
-    r'\[LEARNING\s+category=["\']([^"\']+)["\']\]\s*\n?(.*?)\n?\s*\[/LEARNING\]',
-    re.DOTALL | re.IGNORECASE
+    r'\[LEARNING\s+category=["\']([^"\']+)["\']\]\s*\n?(.*?)\n?\s*\[/LEARNING\]', re.DOTALL | re.IGNORECASE
 )
 
 
-def extract_learnings(response_text: str) -> List[Dict[str, str]]:
+def extract_learnings(response_text: str) -> list[dict[str, str]]:
     """
     Extract [LEARNING] blocks from a Grok response.
     Returns list of {"category": ..., "content": ...} dicts.
@@ -274,10 +256,7 @@ def extract_learnings(response_text: str) -> List[Dict[str, str]]:
     for category, content in matches:
         content = content.strip()
         if content and len(content) > 10:  # Skip trivially short learnings
-            learnings.append({
-                "category": category.lower(),
-                "content": content
-            })
+            learnings.append({"category": category.lower(), "content": content})
     return learnings
 
 
@@ -306,7 +285,7 @@ def bulk_push_learnings(learnings_text: str, source: str = "claude", project: st
             category=category,
             content=line,
             project=project,
-            confidence=0.75  # Lower confidence for bulk-pushed learnings
+            confidence=0.75,  # Lower confidence for bulk-pushed learnings
         )
         # add_learning returns existing ID if duplicate, new ID if new
         if existing_id.startswith("L"):

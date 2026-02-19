@@ -10,14 +10,13 @@ Bidirectional learning between Claude Code and Grok with:
 
 import json
 import sys
-import os
-from typing import Dict, Any, Optional, List
 from pathlib import Path
+from typing import Any
 
 # Ensure UTF-8 output (critical on Windows where default is cp1252)
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 # Resolve import paths — works both as a package (server/) and flat install
 SCRIPT_DIR = Path(__file__).parent
@@ -25,9 +24,11 @@ sys.path.insert(0, str(SCRIPT_DIR.parent))
 sys.path.insert(0, str(SCRIPT_DIR))
 
 try:
-    from server import memory, sessions, context_builder
+    from server import context_builder, memory, sessions
 except ImportError:
-    import memory, sessions, context_builder
+    import context_builder  # type: ignore[no-redef]
+    import memory  # type: ignore[no-redef]
+    import sessions  # type: ignore[no-redef]
 
 __version__ = "2.0.0"
 
@@ -39,30 +40,26 @@ if not CREDENTIALS_FILE.exists():
     CREDENTIALS_FILE = INSTALL_DIR / "credentials.json"
 
 try:
-    with open(CREDENTIALS_FILE, 'r') as f:
+    with open(CREDENTIALS_FILE, "r") as f:
         CREDENTIALS = json.load(f)
 except Exception as e:
-    print(json.dumps({
-        "jsonrpc": "2.0",
-        "error": {
-            "code": -32603,
-            "message": f"Failed to load credentials.json: {str(e)}"
-        }
-    }), file=sys.stdout, flush=True)
+    print(
+        json.dumps({"jsonrpc": "2.0", "error": {"code": -32603, "message": f"Failed to load credentials.json: {e!s}"}}),
+        file=sys.stdout,
+        flush=True,
+    )
     sys.exit(1)
 
 # Initialize AI clients
-AI_CLIENTS: Dict[str, Dict[str, Any]] = {}
+AI_CLIENTS: dict[str, dict[str, Any]] = {}
 
 # Gemini
 if CREDENTIALS.get("gemini", {}).get("enabled", False):
     try:
         import google.generativeai as genai
+
         genai.configure(api_key=CREDENTIALS["gemini"]["api_key"])
-        AI_CLIENTS["gemini"] = {
-            "client": genai.GenerativeModel(CREDENTIALS["gemini"]["model"]),
-            "type": "gemini"
-        }
+        AI_CLIENTS["gemini"] = {"client": genai.GenerativeModel(CREDENTIALS["gemini"]["model"]), "type": "gemini"}
     except Exception as e:
         print(f"Warning: Gemini initialization failed: {e}", file=sys.stderr)
 
@@ -73,19 +70,16 @@ if CREDENTIALS.get("grok", {}).get("enabled", False) or CREDENTIALS.get("openai"
 
         if CREDENTIALS.get("grok", {}).get("enabled", False):
             AI_CLIENTS["grok"] = {
-                "client": OpenAI(
-                    api_key=CREDENTIALS["grok"]["api_key"],
-                    base_url=CREDENTIALS["grok"]["base_url"]
-                ),
+                "client": OpenAI(api_key=CREDENTIALS["grok"]["api_key"], base_url=CREDENTIALS["grok"]["base_url"]),
                 "model": CREDENTIALS["grok"]["model"],
-                "type": "openai"
+                "type": "openai",
             }
 
         if CREDENTIALS.get("openai", {}).get("enabled", False):
             AI_CLIENTS["openai"] = {
                 "client": OpenAI(api_key=CREDENTIALS["openai"]["api_key"]),
                 "model": CREDENTIALS["openai"]["model"],
-                "type": "openai"
+                "type": "openai",
             }
     except Exception as e:
         print(f"Warning: OpenAI client initialization failed: {e}", file=sys.stderr)
@@ -94,13 +88,11 @@ if CREDENTIALS.get("grok", {}).get("enabled", False) or CREDENTIALS.get("openai"
 if CREDENTIALS.get("deepseek", {}).get("enabled", False):
     try:
         from openai import OpenAI
+
         AI_CLIENTS["deepseek"] = {
-            "client": OpenAI(
-                api_key=CREDENTIALS["deepseek"]["api_key"],
-                base_url=CREDENTIALS["deepseek"]["base_url"]
-            ),
+            "client": OpenAI(api_key=CREDENTIALS["deepseek"]["api_key"], base_url=CREDENTIALS["deepseek"]["base_url"]),
             "model": CREDENTIALS["deepseek"]["model"],
-            "type": "openai"
+            "type": "openai",
         }
     except Exception as e:
         print(f"Warning: DeepSeek initialization failed: {e}", file=sys.stderr)
@@ -115,7 +107,7 @@ sessions.initialize(MEMORY_BASE)
 # ─── Core AI Call Function (Enhanced) ────────────────────────────────────────
 
 
-def send_response(response: Dict[str, Any]):
+def send_response(response: dict[str, Any]) -> None:
     """Send a JSON-RPC response."""
     print(json.dumps(response), flush=True)
 
@@ -124,10 +116,10 @@ def call_ai(
     ai_name: str,
     prompt: str,
     temperature: float = 0.7,
-    system_prompt: Optional[str] = None,
-    session_messages: Optional[List[Dict[str, str]]] = None,
+    system_prompt: str | None = None,
+    session_messages: list[dict[str, str]] | None = None,
     tool_name: str = "",
-    project: str = ""
+    project: str = "",
 ) -> str:
     """
     Call a specific AI and return response.
@@ -147,6 +139,7 @@ def call_ai(
 
         if client_info["type"] == "gemini":
             import google.generativeai as genai
+
             # Gemini doesn't support system prompts in the same way
             full_prompt = prompt
             if system_prompt:
@@ -156,7 +149,7 @@ def call_ai(
                 generation_config=genai.GenerationConfig(
                     temperature=temperature,
                     max_output_tokens=8192,
-                )
+                ),
             )
             result_text = response.text
 
@@ -175,10 +168,7 @@ def call_ai(
             messages.append({"role": "user", "content": prompt})
 
             response = client.chat.completions.create(
-                model=client_info["model"],
-                messages=messages,
-                temperature=temperature,
-                max_tokens=8192
+                model=client_info["model"], messages=messages, temperature=temperature, max_tokens=8192
             )
             result_text = response.choices[0].message.content
 
@@ -193,16 +183,16 @@ def call_ai(
                 category=learning["category"],
                 content=learning["content"],
                 project=project,
-                confidence=0.85
+                confidence=0.85,
             )
 
         return result_text
 
     except Exception as e:
-        return f"Error calling {ai_name.upper()}: {str(e)}"
+        return f"Error calling {ai_name.upper()}: {e!s}"
 
 
-def call_multiple_ais(prompt: str, ai_list: List[str], temperature: float = 0.7) -> str:
+def call_multiple_ais(prompt: str, ai_list: list[str], temperature: float = 0.7) -> str:
     """Call multiple AIs and return combined responses."""
     results = []
     available_ais = [ai for ai in ai_list if ai in AI_CLIENTS]
@@ -220,7 +210,7 @@ def call_multiple_ais(prompt: str, ai_list: List[str], temperature: float = 0.7)
 # ─── MCP Protocol Handlers ──────────────────────────────────────────────────
 
 
-def handle_initialize(request_id: Any) -> Dict[str, Any]:
+def handle_initialize(request_id: Any) -> dict[str, Any]:
     """Handle MCP initialization."""
     return {
         "jsonrpc": "2.0",
@@ -228,296 +218,391 @@ def handle_initialize(request_id: Any) -> Dict[str, Any]:
         "result": {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {}},
-            "serverInfo": {
-                "name": "multi-ai-mcp",
-                "version": __version__
-            }
-        }
+            "serverInfo": {"name": "multi-ai-mcp", "version": __version__},
+        },
     }
 
 
-def handle_tools_list(request_id: Any) -> Dict[str, Any]:
+def handle_tools_list(request_id: Any) -> dict[str, Any]:
     """List all available tools (existing + new bidirectional learning tools)."""
     tools = [
         {
             "name": "server_status",
             "description": "Get server status and available AI models",
-            "inputSchema": {
-                "type": "object",
-                "properties": {}
-            }
+            "inputSchema": {"type": "object", "properties": {}},
         }
     ]
 
     # ── Per-AI tools (same as v1 but with optional project param) ────────
 
-    for ai_name in AI_CLIENTS.keys():
-        tools.extend([
-            {
-                "name": f"ask_{ai_name}",
-                "description": f"Ask {ai_name.upper()} a question",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string", "description": "The question or prompt"},
-                        "temperature": {"type": "number", "description": "Temperature (0.0-1.0)", "default": 0.7},
-                        "project": {"type": "string", "description": "Project name for memory context", "default": ""}
+    for ai_name in AI_CLIENTS:
+        tools.extend(
+            [
+                {
+                    "name": f"ask_{ai_name}",
+                    "description": f"Ask {ai_name.upper()} a question",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {"type": "string", "description": "The question or prompt"},
+                            "temperature": {"type": "number", "description": "Temperature (0.0-1.0)", "default": 0.7},
+                            "project": {
+                                "type": "string",
+                                "description": "Project name for memory context",
+                                "default": "",
+                            },
+                        },
+                        "required": ["prompt"],
                     },
-                    "required": ["prompt"]
-                }
-            },
-            {
-                "name": f"{ai_name}_code_review",
-                "description": f"Have {ai_name.upper()} review code for issues and improvements",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "code": {"type": "string", "description": "The code to review"},
-                        "focus": {"type": "string", "description": "Focus area (security, performance, readability, etc.)", "default": "general"},
-                        "project": {"type": "string", "description": "Project name for memory context", "default": ""}
+                },
+                {
+                    "name": f"{ai_name}_code_review",
+                    "description": f"Have {ai_name.upper()} review code for issues and improvements",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string", "description": "The code to review"},
+                            "focus": {
+                                "type": "string",
+                                "description": "Focus area (security, performance, readability, etc.)",
+                                "default": "general",
+                            },
+                            "project": {
+                                "type": "string",
+                                "description": "Project name for memory context",
+                                "default": "",
+                            },
+                        },
+                        "required": ["code"],
                     },
-                    "required": ["code"]
-                }
-            },
-            {
-                "name": f"{ai_name}_think_deep",
-                "description": f"Have {ai_name.upper()} do deep analysis with extended reasoning",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "topic": {"type": "string", "description": "Topic or problem for deep analysis"},
-                        "context": {"type": "string", "description": "Additional context or constraints", "default": ""},
-                        "project": {"type": "string", "description": "Project name for memory context", "default": ""}
+                },
+                {
+                    "name": f"{ai_name}_think_deep",
+                    "description": f"Have {ai_name.upper()} do deep analysis with extended reasoning",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "topic": {"type": "string", "description": "Topic or problem for deep analysis"},
+                            "context": {
+                                "type": "string",
+                                "description": "Additional context or constraints",
+                                "default": "",
+                            },
+                            "project": {
+                                "type": "string",
+                                "description": "Project name for memory context",
+                                "default": "",
+                            },
+                        },
+                        "required": ["topic"],
                     },
-                    "required": ["topic"]
-                }
-            },
-            {
-                "name": f"{ai_name}_brainstorm",
-                "description": f"Brainstorm creative solutions with {ai_name.upper()}",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "challenge": {"type": "string", "description": "The challenge or problem to brainstorm about"},
-                        "constraints": {"type": "string", "description": "Any constraints or limitations", "default": ""},
-                        "project": {"type": "string", "description": "Project name for memory context", "default": ""}
+                },
+                {
+                    "name": f"{ai_name}_brainstorm",
+                    "description": f"Brainstorm creative solutions with {ai_name.upper()}",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "challenge": {
+                                "type": "string",
+                                "description": "The challenge or problem to brainstorm about",
+                            },
+                            "constraints": {
+                                "type": "string",
+                                "description": "Any constraints or limitations",
+                                "default": "",
+                            },
+                            "project": {
+                                "type": "string",
+                                "description": "Project name for memory context",
+                                "default": "",
+                            },
+                        },
+                        "required": ["challenge"],
                     },
-                    "required": ["challenge"]
-                }
-            },
-            {
-                "name": f"{ai_name}_debug",
-                "description": f"Get debugging help from {ai_name.upper()}",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "error": {"type": "string", "description": "Error message or description"},
-                        "code": {"type": "string", "description": "Related code that's causing issues", "default": ""},
-                        "context": {"type": "string", "description": "Additional context about the environment/setup", "default": ""},
-                        "project": {"type": "string", "description": "Project name for memory context", "default": ""}
+                },
+                {
+                    "name": f"{ai_name}_debug",
+                    "description": f"Get debugging help from {ai_name.upper()}",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "error": {"type": "string", "description": "Error message or description"},
+                            "code": {
+                                "type": "string",
+                                "description": "Related code that's causing issues",
+                                "default": "",
+                            },
+                            "context": {
+                                "type": "string",
+                                "description": "Additional context about the environment/setup",
+                                "default": "",
+                            },
+                            "project": {
+                                "type": "string",
+                                "description": "Project name for memory context",
+                                "default": "",
+                            },
+                        },
+                        "required": ["error"],
                     },
-                    "required": ["error"]
-                }
-            },
-            {
-                "name": f"{ai_name}_architecture",
-                "description": f"Get architecture design advice from {ai_name.upper()}",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "requirements": {"type": "string", "description": "System requirements and goals"},
-                        "constraints": {"type": "string", "description": "Technical constraints, budget, timeline etc.", "default": ""},
-                        "scale": {"type": "string", "description": "Expected scale (users, data, etc.)", "default": ""},
-                        "project": {"type": "string", "description": "Project name for memory context", "default": ""}
+                },
+                {
+                    "name": f"{ai_name}_architecture",
+                    "description": f"Get architecture design advice from {ai_name.upper()}",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "requirements": {"type": "string", "description": "System requirements and goals"},
+                            "constraints": {
+                                "type": "string",
+                                "description": "Technical constraints, budget, timeline etc.",
+                                "default": "",
+                            },
+                            "scale": {
+                                "type": "string",
+                                "description": "Expected scale (users, data, etc.)",
+                                "default": "",
+                            },
+                            "project": {
+                                "type": "string",
+                                "description": "Project name for memory context",
+                                "default": "",
+                            },
+                        },
+                        "required": ["requirements"],
                     },
-                    "required": ["requirements"]
-                }
-            }
-        ])
+                },
+            ]
+        )
 
     # ── Multi-AI collaborative tools (when 2+ AIs enabled) ──────────────
 
     if len(AI_CLIENTS) > 1:
-        tools.extend([
-            {
-                "name": "ask_all_ais",
-                "description": "Ask all available AIs the same question and compare responses",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string", "description": "The question to ask all AIs"},
-                        "temperature": {"type": "number", "description": "Temperature for responses", "default": 0.7}
+        tools.extend(
+            [
+                {
+                    "name": "ask_all_ais",
+                    "description": "Ask all available AIs the same question and compare responses",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {"type": "string", "description": "The question to ask all AIs"},
+                            "temperature": {
+                                "type": "number",
+                                "description": "Temperature for responses",
+                                "default": 0.7,
+                            },
+                        },
+                        "required": ["prompt"],
                     },
-                    "required": ["prompt"]
-                }
-            },
-            {
-                "name": "ai_debate",
-                "description": "Have two AIs debate a topic",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "topic": {"type": "string", "description": "The debate topic"},
-                        "ai1": {"type": "string", "description": "First AI", "default": "gemini"},
-                        "ai2": {"type": "string", "description": "Second AI", "default": "grok"}
+                },
+                {
+                    "name": "ai_debate",
+                    "description": "Have two AIs debate a topic",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "topic": {"type": "string", "description": "The debate topic"},
+                            "ai1": {"type": "string", "description": "First AI", "default": "gemini"},
+                            "ai2": {"type": "string", "description": "Second AI", "default": "grok"},
+                        },
+                        "required": ["topic"],
                     },
-                    "required": ["topic"]
-                }
-            },
-            {
-                "name": "collaborative_solve",
-                "description": "Have multiple AIs collaborate to solve a complex problem",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "problem": {"type": "string", "description": "The complex problem to solve"},
-                        "approach": {"type": "string", "description": "How to divide work (sequential, parallel, debate)", "default": "sequential"}
+                },
+                {
+                    "name": "collaborative_solve",
+                    "description": "Have multiple AIs collaborate to solve a complex problem",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "problem": {"type": "string", "description": "The complex problem to solve"},
+                            "approach": {
+                                "type": "string",
+                                "description": "How to divide work (sequential, parallel, debate)",
+                                "default": "sequential",
+                            },
+                        },
+                        "required": ["problem"],
                     },
-                    "required": ["problem"]
-                }
-            },
-            {
-                "name": "ai_consensus",
-                "description": "Get consensus opinion from all available AIs",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "question": {"type": "string", "description": "Question to get consensus on"},
-                        "options": {"type": "string", "description": "Available options or approaches", "default": ""}
+                },
+                {
+                    "name": "ai_consensus",
+                    "description": "Get consensus opinion from all available AIs",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "question": {"type": "string", "description": "Question to get consensus on"},
+                            "options": {
+                                "type": "string",
+                                "description": "Available options or approaches",
+                                "default": "",
+                            },
+                        },
+                        "required": ["question"],
                     },
-                    "required": ["question"]
-                }
-            }
-        ])
+                },
+            ]
+        )
 
     # ── NEW: Bidirectional Learning & Collaboration Tools ────────────────
 
-    tools.extend([
-        {
-            "name": "grok_collaborate",
-            "description": (
-                "Start or continue a multi-turn collaboration session with Grok. "
-                "Both AIs iterate toward an agreed solution. "
-                "First call: provide task+context to start. "
-                "Subsequent calls: provide session_id+message to continue."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "session_id": {"type": "string", "description": "Session ID from a previous call (omit to start new session)"},
-                    "task": {"type": "string", "description": "The task or problem to collaborate on (required for new sessions)"},
-                    "message": {"type": "string", "description": "Your response/follow-up in an ongoing session"},
-                    "context": {"type": "string", "description": "Relevant code, files, or context (for new sessions)", "default": ""},
-                    "project": {"type": "string", "description": "Project name for memory scoping", "default": ""}
-                }
-            }
-        },
-        {
-            "name": "grok_execute_task",
-            "description": (
-                "Give Grok a specific task to execute as an agent. "
-                "Grok works independently and returns a structured solution with "
-                "reasoning, confidence, caveats, and alternatives. "
-                "Claude reviews and applies the results."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "Specific task description"},
-                    "files": {"type": "string", "description": "Relevant file contents Grok needs to see", "default": ""},
-                    "constraints": {"type": "string", "description": "Constraints: coding style, framework, patterns to follow", "default": ""},
-                    "output_format": {"type": "string", "description": "Expected output: code, plan, review, diff", "default": "code"},
-                    "project": {"type": "string", "description": "Project name for memory context", "default": ""}
-                },
-                "required": ["task"]
-            }
-        },
-        {
-            "name": "grok_memory_sync",
-            "description": (
-                "Synchronize learnings between Claude and Grok. "
-                "push: share Claude's learnings with Grok. "
-                "pull: retrieve Grok's learnings for Claude to integrate. "
-                "status: view memory statistics."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "description": "Action: push (Claude->Grok), pull (Grok->Claude), status",
-                        "enum": ["push", "pull", "status"]
+    tools.extend(
+        [
+            {
+                "name": "grok_collaborate",
+                "description": (
+                    "Start or continue a multi-turn collaboration session with Grok. "
+                    "Both AIs iterate toward an agreed solution. "
+                    "First call: provide task+context to start. "
+                    "Subsequent calls: provide session_id+message to continue."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session ID from a previous call (omit to start new session)",
+                        },
+                        "task": {
+                            "type": "string",
+                            "description": "The task or problem to collaborate on (required for new sessions)",
+                        },
+                        "message": {"type": "string", "description": "Your response/follow-up in an ongoing session"},
+                        "context": {
+                            "type": "string",
+                            "description": "Relevant code, files, or context (for new sessions)",
+                            "default": "",
+                        },
+                        "project": {"type": "string", "description": "Project name for memory scoping", "default": ""},
                     },
-                    "learnings": {"type": "string", "description": "For push: learnings text to share with Grok", "default": ""},
-                    "project": {"type": "string", "description": "Project scope for filtering", "default": ""},
-                    "category": {"type": "string", "description": "Category filter: architecture, code, debugging, domain, all", "default": "all"}
                 },
-                "required": ["action"]
-            }
-        },
-        {
-            "name": "grok_session_end",
-            "description": (
-                "End a collaboration session. Saves transcript and optionally "
-                "extracts learnings from the full conversation."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "session_id": {"type": "string", "description": "The session to end"},
-                    "save_learnings": {"type": "boolean", "description": "Extract and save learnings from this session", "default": True},
-                    "claude_summary": {"type": "string", "description": "Claude's summary of what was decided/learned", "default": ""}
+            },
+            {
+                "name": "grok_execute_task",
+                "description": (
+                    "Give Grok a specific task to execute as an agent. "
+                    "Grok works independently and returns a structured solution with "
+                    "reasoning, confidence, caveats, and alternatives. "
+                    "Claude reviews and applies the results."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string", "description": "Specific task description"},
+                        "files": {
+                            "type": "string",
+                            "description": "Relevant file contents Grok needs to see",
+                            "default": "",
+                        },
+                        "constraints": {
+                            "type": "string",
+                            "description": "Constraints: coding style, framework, patterns to follow",
+                            "default": "",
+                        },
+                        "output_format": {
+                            "type": "string",
+                            "description": "Expected output: code, plan, review, diff",
+                            "default": "code",
+                        },
+                        "project": {"type": "string", "description": "Project name for memory context", "default": ""},
+                    },
+                    "required": ["task"],
                 },
-                "required": ["session_id"]
-            }
-        },
-        {
-            "name": "grok_memory_status",
-            "description": "View Grok's memory state: learning counts, recent entries, projects.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "detail": {"type": "string", "description": "Level of detail: summary, full, category", "default": "summary"},
-                    "project": {"type": "string", "description": "Filter by project name", "default": ""},
-                    "category": {"type": "string", "description": "Filter by category", "default": ""}
-                }
-            }
-        }
-    ])
+            },
+            {
+                "name": "grok_memory_sync",
+                "description": (
+                    "Synchronize learnings between Claude and Grok. "
+                    "push: share Claude's learnings with Grok. "
+                    "pull: retrieve Grok's learnings for Claude to integrate. "
+                    "status: view memory statistics."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": "Action: push (Claude->Grok), pull (Grok->Claude), status",
+                            "enum": ["push", "pull", "status"],
+                        },
+                        "learnings": {
+                            "type": "string",
+                            "description": "For push: learnings text to share with Grok",
+                            "default": "",
+                        },
+                        "project": {"type": "string", "description": "Project scope for filtering", "default": ""},
+                        "category": {
+                            "type": "string",
+                            "description": "Category filter: architecture, code, debugging, domain, all",
+                            "default": "all",
+                        },
+                    },
+                    "required": ["action"],
+                },
+            },
+            {
+                "name": "grok_session_end",
+                "description": (
+                    "End a collaboration session. Saves transcript and optionally "
+                    "extracts learnings from the full conversation."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {"type": "string", "description": "The session to end"},
+                        "save_learnings": {
+                            "type": "boolean",
+                            "description": "Extract and save learnings from this session",
+                            "default": True,
+                        },
+                        "claude_summary": {
+                            "type": "string",
+                            "description": "Claude's summary of what was decided/learned",
+                            "default": "",
+                        },
+                    },
+                    "required": ["session_id"],
+                },
+            },
+            {
+                "name": "grok_memory_status",
+                "description": "View Grok's memory state: learning counts, recent entries, projects.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "detail": {
+                            "type": "string",
+                            "description": "Level of detail: summary, full, category",
+                            "default": "summary",
+                        },
+                        "project": {"type": "string", "description": "Filter by project name", "default": ""},
+                        "category": {"type": "string", "description": "Filter by category", "default": ""},
+                    },
+                },
+            },
+        ]
+    )
 
-    return {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "result": {"tools": tools}
-    }
+    return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": tools}}
 
 
 # ─── Tool Execution ─────────────────────────────────────────────────────────
 
 
-def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
+def handle_tool_call(request_id: Any, params: dict[str, Any]) -> dict[str, Any]:
     """Handle tool execution — dispatches to the appropriate handler."""
-    tool_name = params.get("name")
+    tool_name = params.get("name", "")
     arguments = params.get("arguments", {})
 
     try:
         result = _dispatch_tool(tool_name, arguments)
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": {
-                "content": [{"type": "text", "text": result}]
-            }
-        }
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"content": [{"type": "text", "text": result}]}}
     except Exception as e:
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": {"code": -32603, "message": str(e)}
-        }
+        return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32603, "message": str(e)}}
 
 
-def _dispatch_tool(tool_name: str, arguments: Dict[str, Any]) -> str:
+def _dispatch_tool(tool_name: str, arguments: dict[str, Any]) -> str:
     """Route tool calls to their handlers."""
 
     project = arguments.get("project", "")
@@ -650,7 +735,7 @@ def _dispatch_tool(tool_name: str, arguments: Dict[str, Any]) -> str:
 def _handle_server_status() -> str:
     """Server status with memory info."""
     available_ais = list(AI_CLIENTS.keys())
-    total_configured = len([ai for ai in CREDENTIALS.keys() if CREDENTIALS[ai].get("enabled", False)])
+    total_configured = len([ai for ai in CREDENTIALS if CREDENTIALS[ai].get("enabled", False)])
 
     stats = memory.get_memory_stats()
 
@@ -662,21 +747,21 @@ def _handle_server_status() -> str:
         model = client_info.get("model", CREDENTIALS[ai_name]["model"])
         result += f"  {ai_name.upper()}: {model}\n"
 
-    disabled = [ai for ai in CREDENTIALS.keys() if not CREDENTIALS[ai].get("enabled", False) or ai not in AI_CLIENTS]
+    disabled = [ai for ai in CREDENTIALS if not CREDENTIALS[ai].get("enabled", False) or ai not in AI_CLIENTS]
     if disabled:
         result += f"\nDisabled: {', '.join([ai.upper() for ai in disabled])}\n"
 
     result += f"\nGrok Memory: {stats['total_learnings']} learnings, {stats['total_corrections']} corrections\n"
     result += f"Active Sessions: {len(sessions.list_sessions())}\n"
     if stats.get("learnings_by_category"):
-        result += "Learnings by category: " + ", ".join(
-            f"{k}: {v}" for k, v in stats["learnings_by_category"].items()
-        ) + "\n"
+        result += (
+            "Learnings by category: " + ", ".join(f"{k}: {v}" for k, v in stats["learnings_by_category"].items()) + "\n"
+        )
 
     return result
 
 
-def _handle_grok_collaborate(arguments: Dict[str, Any]) -> str:
+def _handle_grok_collaborate(arguments: dict[str, Any]) -> str:
     """Handle multi-turn collaboration sessions."""
     session_id = arguments.get("session_id")
     task = arguments.get("task", "")
@@ -694,9 +779,7 @@ def _handle_grok_collaborate(arguments: Dict[str, Any]) -> str:
 
         session_id = sessions.create_session(task=task, project=project, context=context)
         sys_prompt = context_builder.build_system_prompt(
-            tool_name="grok_collaborate",
-            project=project,
-            session_id=session_id
+            tool_name="grok_collaborate", project=project, session_id=session_id
         )
 
         # Build initial prompt for Grok
@@ -720,13 +803,8 @@ def _handle_grok_collaborate(arguments: Dict[str, Any]) -> str:
         display_text = memory.strip_learning_blocks(display_text)
 
         session = sessions.get_session(session_id)
-        return (
-            f"SESSION: {session_id}\n"
-            f"STATUS: {status}\n"
-            f"TURN: {session['turn_count']}\n\n"
-            f"---\n\n"
-            f"GROK:\n{display_text}"
-        )
+        assert session is not None  # just created above
+        return f"SESSION: {session_id}\nSTATUS: {status}\nTURN: {session['turn_count']}\n\n---\n\nGROK:\n{display_text}"
 
     # Continue existing session
     session = sessions.get_session(session_id)
@@ -741,9 +819,7 @@ def _handle_grok_collaborate(arguments: Dict[str, Any]) -> str:
 
     # Build system prompt and get session history
     sys_prompt = context_builder.build_system_prompt(
-        tool_name="grok_collaborate",
-        project=session.get("project", ""),
-        session_id=session_id
+        tool_name="grok_collaborate", project=session.get("project", ""), session_id=session_id
     )
     history = sessions.get_history(session_id)
 
@@ -754,11 +830,13 @@ def _handle_grok_collaborate(arguments: Dict[str, Any]) -> str:
     current_prompt = history[-1]["content"]  # Claude's latest message
 
     result = call_ai(
-        "grok", current_prompt, 0.6,
+        "grok",
+        current_prompt,
+        0.6,
         system_prompt=sys_prompt,
         session_messages=session_messages,
         tool_name="grok_collaborate",
-        project=session.get("project", "")
+        project=session.get("project", ""),
     )
 
     # Record Grok's response
@@ -769,13 +847,8 @@ def _handle_grok_collaborate(arguments: Dict[str, Any]) -> str:
     display_text = memory.strip_learning_blocks(display_text)
 
     session = sessions.get_session(session_id)
-    output = (
-        f"SESSION: {session_id}\n"
-        f"STATUS: {status}\n"
-        f"TURN: {session['turn_count']}\n\n"
-        f"---\n\n"
-        f"GROK:\n{display_text}"
-    )
+    assert session is not None  # validated above
+    output = f"SESSION: {session_id}\nSTATUS: {status}\nTURN: {session['turn_count']}\n\n---\n\nGROK:\n{display_text}"
 
     if status == "consensus":
         output += "\n\n--- CONSENSUS REACHED ---\nBoth AIs agree. Consider calling grok_session_end to save learnings."
@@ -785,7 +858,7 @@ def _handle_grok_collaborate(arguments: Dict[str, Any]) -> str:
     return output
 
 
-def _handle_grok_execute_task(arguments: Dict[str, Any]) -> str:
+def _handle_grok_execute_task(arguments: dict[str, Any]) -> str:
     """Grok as an independent agent executing a task."""
     task = arguments.get("task", "")
     files = arguments.get("files", "")
@@ -804,15 +877,12 @@ def _handle_grok_execute_task(arguments: Dict[str, Any]) -> str:
             "You are executing a task independently as an agent. "
             "Provide a complete, production-ready solution. "
             "Be thorough — Claude will review your output but should be able to apply it directly."
-        )
+        ),
     )
 
     # Build the agent-style user prompt
     prompt = context_builder.build_agent_prompt(
-        task=task,
-        files=files,
-        constraints=constraints,
-        output_format=output_format
+        task=task, files=files, constraints=constraints, output_format=output_format
     )
 
     result = call_ai("grok", prompt, 0.4, system_prompt=sys_prompt, tool_name="grok_execute_task", project=project)
@@ -821,7 +891,7 @@ def _handle_grok_execute_task(arguments: Dict[str, Any]) -> str:
     return f"GROK AGENT RESULT ({output_format}):\n\n{display_text}"
 
 
-def _handle_grok_memory_sync(arguments: Dict[str, Any]) -> str:
+def _handle_grok_memory_sync(arguments: dict[str, Any]) -> str:
     """Bidirectional memory synchronization between Claude and Grok."""
     action = arguments.get("action", "status")
     learnings_text = arguments.get("learnings", "")
@@ -836,18 +906,16 @@ def _handle_grok_memory_sync(arguments: Dict[str, Any]) -> str:
 
     elif action == "pull":
         learnings = memory.query_learnings(
-            category=category if category != "all" else None,
-            project=project or None,
-            limit=30
+            category=category if category != "all" else None, project=project or None, limit=30
         )
         if not learnings:
             return "MEMORY SYNC (pull): No learnings found matching filters."
 
         result = f"MEMORY SYNC (pull): {len(learnings)} learnings from Grok's memory\n\n"
-        for l in learnings:
-            source_tag = f"[{l['source']}]" if l.get("source") else ""
-            project_tag = f"(project: {l['project']})" if l.get("project") else ""
-            result += f"- [{l['category']}] {source_tag} {l['content']} {project_tag}\n"
+        for entry in learnings:
+            source_tag = f"[{entry['source']}]" if entry.get("source") else ""
+            project_tag = f"(project: {entry['project']})" if entry.get("project") else ""
+            result += f"- [{entry['category']}] {source_tag} {entry['content']} {project_tag}\n"
         return result
 
     elif action == "status":
@@ -866,7 +934,7 @@ def _handle_grok_memory_sync(arguments: Dict[str, Any]) -> str:
     return f"Error: Unknown action '{action}'. Use push, pull, or status."
 
 
-def _handle_grok_session_end(arguments: Dict[str, Any]) -> str:
+def _handle_grok_session_end(arguments: dict[str, Any]) -> str:
     """End a collaboration session and optionally extract learnings."""
     session_id = arguments.get("session_id", "")
     save_learnings = arguments.get("save_learnings", True)
@@ -907,32 +975,33 @@ def _handle_grok_session_end(arguments: Dict[str, Any]) -> str:
         extracted_learnings = memory.extract_learnings(result)
 
         # Save extracted learnings
-        for l in extracted_learnings:
+        for entry in extracted_learnings:
             memory.add_learning(
                 source="collaboration",
-                category=l["category"],
-                content=l["content"],
+                category=entry["category"],
+                content=entry["content"],
                 project=session.get("project", ""),
-                confidence=0.9
+                confidence=0.9,
             )
 
     # End the session (saves transcript to disk)
     transcript = sessions.end_session(session_id)
+    assert transcript is not None  # session existed (checked above)
 
     result = f"Session {session_id} ended.\n"
     result += f"Turns: {transcript['turn_count']}\n"
     result += f"Final status: {transcript['status']}\n"
     if extracted_learnings:
         result += f"\nExtracted {len(extracted_learnings)} learnings:\n"
-        for l in extracted_learnings:
-            result += f"  - [{l['category']}] {l['content']}\n"
+        for entry in extracted_learnings:
+            result += f"  - [{entry['category']}] {entry['content']}\n"
     else:
         result += "No learnings extracted.\n"
 
     return result
 
 
-def _handle_grok_memory_status(arguments: Dict[str, Any]) -> str:
+def _handle_grok_memory_status(arguments: dict[str, Any]) -> str:
     """View Grok's memory state."""
     detail = arguments.get("detail", "summary")
     project_filter = arguments.get("project", "")
@@ -959,23 +1028,19 @@ def _handle_grok_memory_status(arguments: Dict[str, Any]) -> str:
         return result
 
     elif detail == "full" or detail == "category":
-        learnings = memory.query_learnings(
-            category=category_filter or None,
-            project=project_filter or None,
-            limit=50
-        )
+        learnings = memory.query_learnings(category=category_filter or None, project=project_filter or None, limit=50)
         result = f"GROK MEMORY ({len(learnings)} learnings"
         if category_filter:
             result += f", category={category_filter}"
         if project_filter:
             result += f", project={project_filter}"
         result += ")\n\n"
-        for l in learnings:
-            conf = f"[conf={l.get('confidence', '?')}]"
-            src = f"[{l.get('source', '?')}]"
-            result += f"  {l['id']} [{l['category']}] {src} {conf} {l['content']}\n"
-            if l.get("project"):
-                result += f"       project: {l['project']}\n"
+        for entry in learnings:
+            conf = f"[conf={entry.get('confidence', '?')}]"
+            src = f"[{entry.get('source', '?')}]"
+            result += f"  {entry['id']} [{entry['category']}] {src} {conf} {entry['content']}\n"
+            if entry.get("project"):
+                result += f"       project: {entry['project']}\n"
         return result
 
     return f"Error: Unknown detail level '{detail}'. Use summary, full, or category."
@@ -984,7 +1049,7 @@ def _handle_grok_memory_status(arguments: Dict[str, Any]) -> str:
 # ── Legacy Multi-AI Handlers ────────────────────────────────────────────────
 
 
-def _handle_ai_debate(arguments: Dict[str, Any]) -> str:
+def _handle_ai_debate(arguments: dict[str, Any]) -> str:
     topic = arguments.get("topic", "")
     ai1 = arguments.get("ai1", "gemini")
     ai2 = arguments.get("ai2", "grok")
@@ -1000,7 +1065,7 @@ def _handle_ai_debate(arguments: Dict[str, Any]) -> str:
     )
 
 
-def _handle_collaborative_solve(arguments: Dict[str, Any]) -> str:
+def _handle_collaborative_solve(arguments: dict[str, Any]) -> str:
     problem = arguments.get("problem", "")
     approach = arguments.get("approach", "sequential")
     if approach == "sequential":
@@ -1014,7 +1079,7 @@ def _handle_collaborative_solve(arguments: Dict[str, Any]) -> str:
     return result
 
 
-def _handle_ai_consensus(arguments: Dict[str, Any]) -> str:
+def _handle_ai_consensus(arguments: dict[str, Any]) -> str:
     question = arguments.get("question", "")
     options = arguments.get("options", "")
     prompt = f"Question: {question}"
@@ -1022,7 +1087,7 @@ def _handle_ai_consensus(arguments: Dict[str, Any]) -> str:
         prompt += f"\nAvailable options: {options}"
     prompt += "\nProvide your recommendation and reasoning. Be concise but thorough."
     responses = []
-    for ai_name in AI_CLIENTS.keys():
+    for ai_name in AI_CLIENTS:
         response = call_ai(ai_name, prompt, 0.4)
         responses.append(f"## {ai_name.upper()} Recommendation:\n{response}")
     return "AI CONSENSUS ANALYSIS\n\n" + "\n\n".join(responses)
@@ -1056,7 +1121,7 @@ def main():
                 response = {
                     "jsonrpc": "2.0",
                     "id": request_id,
-                    "error": {"code": -32601, "message": f"Method not found: {method}"}
+                    "error": {"code": -32601, "message": f"Method not found: {method}"},
                 }
 
             send_response(response)
@@ -1066,12 +1131,10 @@ def main():
         except EOFError:
             break
         except Exception as e:
-            if 'request_id' in locals():
-                send_response({
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": -32603, "message": f"Internal error: {str(e)}"}
-                })
+            if "request_id" in locals():
+                send_response(
+                    {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32603, "message": f"Internal error: {e!s}"}}
+                )
 
 
 if __name__ == "__main__":

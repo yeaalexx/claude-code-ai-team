@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Unit tests for the sessions module (multi-turn collaboration)."""
 
-import sys
 import json
-import tempfile
 import shutil
+import sys
+import tempfile
 from pathlib import Path
 
-# Add the installed server directory to path
+# Add the server directory to path (installed location, or repo fallback for CI)
 SERVER_DIR = Path.home() / ".claude-mcp-servers" / "multi-ai-collab"
+if not SERVER_DIR.exists():
+    SERVER_DIR = Path(__file__).resolve().parent.parent / "server"
 sys.path.insert(0, str(SERVER_DIR))
 
-import memory
-import sessions
+import memory  # noqa: E402
+import sessions  # noqa: E402
 
 # Track test results
 passed = 0
@@ -50,7 +52,7 @@ def run_tests():
         sid = sessions.create_session(
             task="Design the authentication module",
             context="Building a FastAPI microservice with JWT auth",
-            project="test-project"
+            project="test-project",
         )
         test("Returns session ID string", isinstance(sid, str))
         test("Session ID has prefix", sid.startswith("sess_"))
@@ -72,16 +74,23 @@ def run_tests():
         test("User turn added", len(session["history"]) == 1)
         test("Turn count still 0 (user turn)", session["turn_count"] == 0)
 
-        sessions.add_turn(sid, "assistant",
-            "I agree with RS256 for production but suggest also supporting HS256 for dev.\n[STATUS: PARTIAL]")
+        sessions.add_turn(
+            sid,
+            "assistant",
+            "I agree with RS256 for production but suggest also supporting HS256 for dev.\n[STATUS: PARTIAL]",
+        )
         session = sessions.get_session(sid)
         test("Assistant turn added", len(session["history"]) == 2)
         test("Turn count is 1 (assistant)", session["turn_count"] == 1)
 
-        sessions.add_turn(sid, "user",
-            "Good point. We'll use RS256 in production and HS256 in dev via environment config.")
-        sessions.add_turn(sid, "assistant",
-            "That's clean. Environment-based algorithm selection is the right pattern.\n[STATUS: AGREE]")
+        sessions.add_turn(
+            sid, "user", "Good point. We'll use RS256 in production and HS256 in dev via environment config."
+        )
+        sessions.add_turn(
+            sid,
+            "assistant",
+            "That's clean. Environment-based algorithm selection is the right pattern.\n[STATUS: AGREE]",
+        )
         session = sessions.get_session(sid)
         test("Four messages total", len(session["history"]) == 4)
         test("Turn count is 2", session["turn_count"] == 2)
@@ -117,8 +126,7 @@ def run_tests():
         # --- Test 6: Disagreement Detection ---
         print("\n[6] Disagreement Detection — 3 DISAGREEs = Persistent")
         sid2 = sessions.create_session(
-            task="Choose database engine",
-            context="Need to pick between PostgreSQL and MongoDB"
+            task="Choose database engine", context="Need to pick between PostgreSQL and MongoDB"
         )
 
         sessions.add_turn(sid2, "user", "PostgreSQL is better — we need ACID transactions.")
@@ -131,7 +139,7 @@ def run_tests():
         sessions.add_turn(sid2, "user", "But we need referential integrity for billing.")
         r2 = "Billing is only 20% of the data. MongoDB handles the other 80% better.\n[STATUS: DISAGREE]"
         sessions.add_turn(sid2, "assistant", r2)
-        s2 = sessions.detect_consensus(sid2, r2)
+        sessions.detect_consensus(sid2, r2)
         test("Second DISAGREE counted", sessions.get_session(sid2)["consecutive_disagrees"] == 2)
 
         sessions.add_turn(sid2, "user", "I still think PostgreSQL with JSONB covers both needs.")
@@ -206,15 +214,13 @@ def run_tests():
         state_b = sessions.get_session(sid_b)
         test("Session A has 1 message", len(state_a["history"]) == 1)
         test("Session B has 1 message", len(state_b["history"]) == 1)
-        test("Sessions are independent",
-             state_a["history"][0]["content"] != state_b["history"][0]["content"])
+        test("Sessions are independent", state_a["history"][0]["content"] != state_b["history"][0]["content"])
 
         # --- Test 12: Invalid Session ID ---
         print("\n[12] Invalid Session ID Handling")
         test("get_session returns None", sessions.get_session("invalid_id") is None)
         test("get_history returns empty", sessions.get_history("invalid_id") == [])
-        test("detect_consensus returns error",
-             sessions.detect_consensus("invalid_id", "text") == "error")
+        test("detect_consensus returns error", sessions.detect_consensus("invalid_id", "text") == "error")
         test("end_session returns None", sessions.end_session("invalid_id") is None)
 
         try:

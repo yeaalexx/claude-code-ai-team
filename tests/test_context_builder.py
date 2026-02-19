@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Unit tests for the context_builder module (dynamic system prompt assembly)."""
 
+import shutil
 import sys
 import tempfile
-import shutil
 from pathlib import Path
 
-# Add the installed server directory to path
+# Add the server directory to path (installed location, or repo fallback for CI)
 SERVER_DIR = Path.home() / ".claude-mcp-servers" / "multi-ai-collab"
+if not SERVER_DIR.exists():
+    SERVER_DIR = Path(__file__).resolve().parent.parent / "server"
 sys.path.insert(0, str(SERVER_DIR))
 
-import memory
-import sessions
-import context_builder
+import context_builder  # noqa: E402
+import memory  # noqa: E402
+import sessions  # noqa: E402
 
 # Track test results
 passed = 0
@@ -44,22 +46,23 @@ def run_tests():
         sessions.ACTIVE_SESSIONS.clear()
 
         memory.add_learning(
-            source="test", category="architecture",
+            source="test",
+            category="architecture",
             content="Schema-per-tenant with RLS defense-in-depth is the strongest isolation pattern",
-            project="pharma-eln"
+            project="pharma-eln",
         )
         memory.add_learning(
-            source="test", category="security",
-            content="Always validate JWT tokens at both gateway and service level"
+            source="test", category="security", content="Always validate JWT tokens at both gateway and service level"
         )
         memory.add_learning(
-            source="test", category="performance",
-            content="Use connection pooling with minimum 5 connections for microservices"
+            source="test",
+            category="performance",
+            content="Use connection pooling with minimum 5 connections for microservices",
         )
         memory.add_correction(
             corrector="test",
             original_claim="Always use MongoDB for microservices",
-            correction="PostgreSQL with JSONB is often better for microservices needing ACID compliance"
+            correction="PostgreSQL with JSONB is often better for microservices needing ACID compliance",
         )
 
         # --- Test 1: Basic System Prompt ---
@@ -75,9 +78,11 @@ def run_tests():
         prompt_ask = context_builder.build_system_prompt(tool_name="ask_grok")
         test("Tool-contextualized prompt generated", len(prompt_ask) > 100)
         # Should include learnings since we added some
-        test("Prompt is at least as long as basic",
-             len(prompt_ask) >= len(prompt) - 50,
-             f"ask_grok={len(prompt_ask)}, basic={len(prompt)}")
+        test(
+            "Prompt is at least as long as basic",
+            len(prompt_ask) >= len(prompt) - 50,
+            f"ask_grok={len(prompt_ask)}, basic={len(prompt)}",
+        )
 
         # --- Test 3: System Prompt with Project Filter ---
         print("\n[3] System Prompt with Project Context")
@@ -92,17 +97,11 @@ def run_tests():
 
         # --- Test 5: Collaboration Session Prompt ---
         print("\n[5] System Prompt for Collaboration Session")
-        sid = sessions.create_session(
-            task="Design auth module",
-            context="FastAPI + JWT"
-        )
+        sid = sessions.create_session(task="Design auth module", context="FastAPI + JWT")
         sessions.add_turn(sid, "user", "Let's use RS256 for token signing.")
         sessions.add_turn(sid, "assistant", "Agreed, RS256 is right for production.\n[STATUS: AGREE]")
 
-        prompt_collab = context_builder.build_system_prompt(
-            tool_name="grok_collaborate",
-            session_id=sid
-        )
+        prompt_collab = context_builder.build_system_prompt(tool_name="grok_collaborate", session_id=sid)
         test("Collaboration prompt generated", len(prompt_collab) > 100)
         test("Contains STATUS protocol", "STATUS" in prompt_collab)
 
@@ -113,8 +112,7 @@ def run_tests():
         short_est = context_builder.estimate_tokens(short_text)
         long_est = context_builder.estimate_tokens(long_text)
         test("Short text estimate > 0", short_est > 0)
-        test("Long text estimate reasonable", 800 <= long_est <= 1200,
-             f"Got {long_est}")
+        test("Long text estimate reasonable", 800 <= long_est <= 1200, f"Got {long_est}")
         test("Longer text = more tokens", long_est > short_est)
 
         # --- Test 7: Agent Prompt ---
@@ -122,7 +120,7 @@ def run_tests():
         agent_prompt = context_builder.build_agent_prompt(
             task="Implement a JWT validation middleware for FastAPI",
             constraints="Must support both RS256 and HS256. Must be async.",
-            output_format="code"
+            output_format="code",
         )
         test("Agent prompt is non-empty", len(agent_prompt) > 50)
         test("Contains task description", "JWT" in agent_prompt)
@@ -134,37 +132,38 @@ def run_tests():
         agent_prompt_files = context_builder.build_agent_prompt(
             task="Review this authentication module",
             files="def authenticate(token):\n    return jwt.decode(token, SECRET_KEY)",
-            output_format="review"
+            output_format="review",
         )
-        test("Agent prompt includes file content",
-             "authenticate" in agent_prompt_files or "jwt.decode" in agent_prompt_files)
+        test(
+            "Agent prompt includes file content",
+            "authenticate" in agent_prompt_files or "jwt.decode" in agent_prompt_files,
+        )
 
         # --- Test 9: Token Budget Enforcement ---
         print("\n[9] Token Budget Enforcement")
         # Add many learnings to test budget limits
         for i in range(50):
-            memory.add_learning(
-                source="test", category="code",
-                content=f"Test learning number {i}: " + "x" * 200
-            )
+            memory.add_learning(source="test", category="code", content=f"Test learning number {i}: " + "x" * 200)
 
         prompt_budget = context_builder.build_system_prompt(tool_name="ask_grok")
         tokens = context_builder.estimate_tokens(prompt_budget)
-        test("Prompt within budget",
-             tokens <= context_builder.DEFAULT_TOKEN_BUDGET * 1.3,
-             f"Got {tokens} tokens, budget is {context_builder.DEFAULT_TOKEN_BUDGET}")
+        test(
+            "Prompt within budget",
+            tokens <= context_builder.DEFAULT_TOKEN_BUDGET * 1.3,
+            f"Got {tokens} tokens, budget is {context_builder.DEFAULT_TOKEN_BUDGET}",
+        )
 
         # --- Test 10: Tool Category Mapping ---
         print("\n[10] Tool Category Mapping")
         has_entries = len(context_builder.TOOL_CATEGORY_MAP) > 0
-        test("Category map has entries", has_entries,
-             f"Map has {len(context_builder.TOOL_CATEGORY_MAP)} entries")
+        test("Category map has entries", has_entries, f"Map has {len(context_builder.TOOL_CATEGORY_MAP)} entries")
 
         # Check known tools are mapped
         known_tools = ["ask_grok", "grok_code_review", "grok_debug", "grok_think_deep"]
         for tool in known_tools:
-            test(f"{tool} is mapped", tool in context_builder.TOOL_CATEGORY_MAP,
-                 f"{tool} not found in TOOL_CATEGORY_MAP")
+            test(
+                f"{tool} is mapped", tool in context_builder.TOOL_CATEGORY_MAP, f"{tool} not found in TOOL_CATEGORY_MAP"
+            )
 
         # --- Test 11: Empty Memory Prompt ---
         print("\n[11] Prompt with No Learnings")

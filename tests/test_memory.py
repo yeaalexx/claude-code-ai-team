@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Unit tests for the memory module (Grok persistent memory)."""
 
-import sys
-import json
-import tempfile
 import shutil
+import sys
+import tempfile
 from pathlib import Path
 
-# Add the installed server directory to path
+# Add the server directory to path (installed location, or repo fallback for CI)
 SERVER_DIR = Path.home() / ".claude-mcp-servers" / "multi-ai-collab"
+if not SERVER_DIR.exists():
+    SERVER_DIR = Path(__file__).resolve().parent.parent / "server"
 sys.path.insert(0, str(SERVER_DIR))
 
-import memory
+import memory  # noqa: E402
 
 # Track test results
 passed = 0
@@ -57,7 +58,7 @@ def run_tests():
             source="test",
             category="architecture",
             content="Schema-per-tenant is the best isolation pattern for regulated SaaS",
-            project="test-project"
+            project="test-project",
         )
         test("Returns learning ID", isinstance(result_id, str) and result_id.startswith("L"))
         test("ID format correct", result_id == "L0001")
@@ -74,7 +75,7 @@ def run_tests():
         dup_id = memory.add_learning(
             source="test",
             category="architecture",
-            content="Schema-per-tenant is the best isolation pattern for regulated SaaS"
+            content="Schema-per-tenant is the best isolation pattern for regulated SaaS",
         )
         test("Duplicate returns existing ID", dup_id == "L0001")
 
@@ -86,12 +87,12 @@ def run_tests():
         id2 = memory.add_learning(
             source="test",
             category="code",
-            content="Always use atomic writes (temp file + rename) for critical data files"
+            content="Always use atomic writes (temp file + rename) for critical data files",
         )
         id3 = memory.add_learning(
             source="test",
             category="debugging",
-            content="Windows cp1252 encoding breaks emoji in Python stdio — force UTF-8"
+            content="Windows cp1252 encoding breaks emoji in Python stdio — force UTF-8",
         )
         test("Second learning gets L0002", id2 == "L0002")
         test("Third learning gets L0003", id3 == "L0003")
@@ -117,7 +118,7 @@ def run_tests():
             corrector="test",
             original_claim="Schema-per-tenant is always best",
             correction="Schema-per-tenant is best for regulated SaaS but shared-schema can be better for high-scale B2C",
-            category="architecture"
+            category="architecture",
         )
         test("Correction returns ID", isinstance(corr_id, str) and corr_id.startswith("C"))
 

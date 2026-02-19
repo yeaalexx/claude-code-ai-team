@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Ruff lint + format check ──────────────────────────────────────────────
+  ruff:
+    name: Ruff (lint + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Ruff check (lint)
+        run: ruff check --output-format=github .
+      - name: Ruff format (check only)
+        run: ruff format --check .
+
+  # ── mypy type checking ────────────────────────────────────────────────────
+  mypy:
+    name: mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: mypy (server/)
+        run: mypy server/
+
+  # ── ShellCheck ────────────────────────────────────────────────────────────
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: .
+          severity: warning
+
+  # ── Unit tests (matrix: Python 3.10–3.12) ────────────────────────────────
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -r requirements.txt
+      - name: Unit tests — memory
+        run: python tests/test_memory.py
+      - name: Unit tests — sessions
+        run: python tests/test_sessions.py
+      - name: Unit tests — context_builder
+        run: python tests/test_context_builder.py
+      - name: Smoke tests
+        run: bash tests/smoke_test.sh
+
+  # ── Gate: all checks must pass ────────────────────────────────────────────
+  all-checks:
+    name: All checks passed
+    if: always()
+    needs: [ruff, mypy, shellcheck, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs succeeded
+        run: |
+          if [[ "${{ needs.ruff.result }}" != "success" ||
+                "${{ needs.mypy.result }}" != "success" ||
+                "${{ needs.shellcheck.result }}" != "success" ||
+                "${{ needs.test.result }}" != "success" ]]; then
+            echo "::error::One or more required checks failed."
+            echo "  ruff:       ${{ needs.ruff.result }}"
+            echo "  mypy:       ${{ needs.mypy.result }}"
+            echo "  shellcheck: ${{ needs.shellcheck.result }}"
+            echo "  test:       ${{ needs.test.result }}"
+            exit 1
+          fi
+          echo "All checks passed."

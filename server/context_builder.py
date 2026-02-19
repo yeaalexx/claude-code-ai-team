@@ -12,12 +12,10 @@ Assembles Grok's system prompt by injecting:
 Uses a token budget to avoid exceeding context limits.
 """
 
-from typing import Optional
-
 try:
-    from . import memory, sessions
+    from . import memory
 except ImportError:
-    import memory, sessions
+    import memory  # type: ignore[no-redef]
 
 
 # Token budget for system prompt (conservative — Grok has 131K context)
@@ -44,10 +42,10 @@ def estimate_tokens(text: str) -> int:
 
 def build_system_prompt(
     tool_name: str = "",
-    project: Optional[str] = None,
-    session_id: Optional[str] = None,
+    project: str | None = None,
+    session_id: str | None = None,
     include_learnings: bool = True,
-    extra_instructions: str = ""
+    extra_instructions: str = "",
 ) -> str:
     """
     Build a complete system prompt for a Grok API call.
@@ -103,20 +101,13 @@ def build_system_prompt(
         remaining_budget = budget - used_tokens - 500  # Reserve 500 for corrections
         if remaining_budget > 200:
             category = TOOL_CATEGORY_MAP.get(tool_name)
-            learnings_text = _get_relevant_learnings(
-                category=category,
-                project=project,
-                token_budget=remaining_budget
-            )
+            learnings_text = _get_relevant_learnings(category=category, project=project, token_budget=remaining_budget)
             if learnings_text:
                 parts.append(learnings_text)
                 used_tokens += estimate_tokens(learnings_text)
 
         # Recent corrections
-        corrections_text = _get_relevant_corrections(
-            category=TOOL_CATEGORY_MAP.get(tool_name),
-            token_budget=500
-        )
+        corrections_text = _get_relevant_corrections(category=TOOL_CATEGORY_MAP.get(tool_name), token_budget=500)
         if corrections_text:
             parts.append(corrections_text)
             used_tokens += estimate_tokens(corrections_text)
@@ -182,11 +173,7 @@ Be direct about disagreements. Do not agree just to be agreeable — push back w
 you see issues. Both you and Claude benefit from honest evaluation."""
 
 
-def _get_relevant_learnings(
-    category: Optional[str],
-    project: Optional[str],
-    token_budget: int
-) -> str:
+def _get_relevant_learnings(category: str | None, project: str | None, token_budget: int) -> str:
     """Get formatted learnings that fit within the token budget."""
     learnings = memory.query_learnings(category=category, project=project, limit=50)
     if not learnings:
@@ -198,10 +185,10 @@ def _get_relevant_learnings(
     lines = [header]
     tokens_used = estimate_tokens(header)
 
-    for l in learnings:
-        line = f"- [{l['category']}] {l['content']}"
-        if l.get("project"):
-            line += f" (project: {l['project']})"
+    for entry in learnings:
+        line = f"- [{entry['category']}] {entry['content']}"
+        if entry.get("project"):
+            line += f" (project: {entry['project']})"
         line_tokens = estimate_tokens(line)
         if tokens_used + line_tokens > token_budget:
             break
@@ -213,10 +200,7 @@ def _get_relevant_learnings(
     return "\n".join(lines)
 
 
-def _get_relevant_corrections(
-    category: Optional[str],
-    token_budget: int
-) -> str:
+def _get_relevant_corrections(category: str | None, token_budget: int) -> str:
     """Get recent corrections formatted within token budget."""
     corrections = memory.get_corrections(category=category, limit=5)
     if not corrections:

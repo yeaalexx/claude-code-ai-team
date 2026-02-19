@@ -4,15 +4,18 @@ Integration tests for the v2 MCP server.
 Starts the server as a subprocess, sends JSON-RPC messages, verifies responses.
 """
 
-import sys
 import json
-import subprocess
-import time
-import threading
 import os
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 
-SERVER_PY = str(Path.home() / ".claude-mcp-servers" / "multi-ai-collab" / "server.py")
+# Server path: installed location, or repo fallback for CI
+_installed = Path.home() / ".claude-mcp-servers" / "multi-ai-collab" / "server.py"
+_repo = Path(__file__).resolve().parent.parent / "server" / "server.py"
+SERVER_PY = str(_installed if _installed.exists() else _repo)
 PYTHON = sys.executable
 
 passed = 0
@@ -116,13 +119,19 @@ def run_tests():
 
         # --- Test 1: Initialize ---
         print("\n[1] Server Initialization Handshake")
-        resp = send_rpc(proc, "initialize", {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "integration-test", "version": "1.0.0"}
-        }, msg_id=1)
-        test("Initialize returns response", resp is not None,
-             f"stderr: {stderr_lines[-3:] if stderr_lines else 'none'}")
+        resp = send_rpc(
+            proc,
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "integration-test", "version": "1.0.0"},
+            },
+            msg_id=1,
+        )
+        test(
+            "Initialize returns response", resp is not None, f"stderr: {stderr_lines[-3:] if stderr_lines else 'none'}"
+        )
         if resp and "_parse_error" in resp:
             print(f"    Parse error: {resp['_parse_error']}")
             print(f"    Raw: {resp['_raw']}")
@@ -151,43 +160,50 @@ def run_tests():
             tool_names = [t["name"] for t in tools]
             test(f"Has {len(tools)} tools", len(tools) >= 10, f"Only {len(tools)}")
 
-            v2_tools = ["grok_collaborate", "grok_execute_task", "grok_memory_sync",
-                        "grok_session_end", "grok_memory_status"]
+            v2_tools = [
+                "grok_collaborate",
+                "grok_execute_task",
+                "grok_memory_sync",
+                "grok_session_end",
+                "grok_memory_status",
+            ]
             for tool in v2_tools:
                 test(f"v2: {tool}", tool in tool_names)
 
-            v1_tools = ["ask_grok", "grok_code_review", "grok_debug",
-                        "grok_think_deep", "grok_brainstorm"]
+            v1_tools = ["ask_grok", "grok_code_review", "grok_debug", "grok_think_deep", "grok_brainstorm"]
             for tool in v1_tools:
                 test(f"v1: {tool}", tool in tool_names)
 
         # --- Test 3: Memory Status ---
         print("\n[3] grok_memory_status")
-        resp = send_rpc(proc, "tools/call", {
-            "name": "grok_memory_status",
-            "arguments": {}
-        }, msg_id=3)
+        resp = send_rpc(proc, "tools/call", {"name": "grok_memory_status", "arguments": {}}, msg_id=3)
         test("Returns response", resp is not None)
         if resp and "result" in resp:
             content = resp["result"].get("content", [])
             text = content[0].get("text", "") if content else ""
             test("Has text content", len(text) > 0)
-            test("Contains learnings info", "learnings" in text.lower() or "learning" in text.lower(),
-                 f"Text: {text[:200]}")
-            test("Contains corrections info", "correction" in text.lower(),
-                 f"Text: {text[:200]}")
-            test("Contains last updated", "updated" in text.lower(),
-                 f"Text: {text[:200]}")
+            test(
+                "Contains learnings info",
+                "learnings" in text.lower() or "learning" in text.lower(),
+                f"Text: {text[:200]}",
+            )
+            test("Contains corrections info", "correction" in text.lower(), f"Text: {text[:200]}")
+            test("Contains last updated", "updated" in text.lower(), f"Text: {text[:200]}")
 
         # --- Test 4: Memory Sync Push ---
         print("\n[4] grok_memory_sync (push)")
-        resp = send_rpc(proc, "tools/call", {
-            "name": "grok_memory_sync",
-            "arguments": {
-                "action": "push",
-                "learnings": "- [TEST] Integration test: always validate API responses before processing them in production"
-            }
-        }, msg_id=4)
+        resp = send_rpc(
+            proc,
+            "tools/call",
+            {
+                "name": "grok_memory_sync",
+                "arguments": {
+                    "action": "push",
+                    "learnings": "- [TEST] Integration test: always validate API responses before processing them in production",
+                },
+            },
+            msg_id=4,
+        )
         test("Returns response", resp is not None)
         if resp and "result" in resp:
             content = resp["result"].get("content", [])
@@ -196,10 +212,7 @@ def run_tests():
 
         # --- Test 5: Memory Sync Pull ---
         print("\n[5] grok_memory_sync (pull)")
-        resp = send_rpc(proc, "tools/call", {
-            "name": "grok_memory_sync",
-            "arguments": {"action": "pull"}
-        }, msg_id=5)
+        resp = send_rpc(proc, "tools/call", {"name": "grok_memory_sync", "arguments": {"action": "pull"}}, msg_id=5)
         test("Returns response", resp is not None)
         if resp and "result" in resp:
             content = resp["result"].get("content", [])
@@ -208,33 +221,24 @@ def run_tests():
 
         # --- Test 6: Server Status ---
         print("\n[6] server_status")
-        resp = send_rpc(proc, "tools/call", {
-            "name": "server_status",
-            "arguments": {}
-        }, msg_id=6)
+        resp = send_rpc(proc, "tools/call", {"name": "server_status", "arguments": {}}, msg_id=6)
         test("Returns response", resp is not None)
         if resp and "result" in resp:
             content = resp["result"].get("content", [])
             text = content[0].get("text", "") if content else ""
             test("Has content", len(text) > 0)
-            test("Contains version info", "v2.0.0" in text or "2.0.0" in text,
-                 f"Text: {text[:200]}")
-            test("Contains AI status", "grok" in text.lower(),
-                 f"Text: {text[:200]}")
+            test("Contains version info", "v2.0.0" in text or "2.0.0" in text, f"Text: {text[:200]}")
+            test("Contains AI status", "grok" in text.lower(), f"Text: {text[:200]}")
 
         # --- Test 7: Input Schemas ---
         print("\n[7] Tool Input Schema Validation")
         for tool in tools:
             schema = tool.get("inputSchema", {})
-            test(f"{tool['name']} has schema",
-                 isinstance(schema, dict) and "type" in schema)
+            test(f"{tool['name']} has schema", isinstance(schema, dict) and "type" in schema)
 
         # --- Test 8: Unknown Tool Handling ---
         print("\n[8] Error Handling — Unknown Tool")
-        resp = send_rpc(proc, "tools/call", {
-            "name": "nonexistent_tool_xyz",
-            "arguments": {}
-        }, msg_id=8)
+        resp = send_rpc(proc, "tools/call", {"name": "nonexistent_tool_xyz", "arguments": {}}, msg_id=8)
         test("Returns response", resp is not None)
         if resp:
             is_error = "error" in resp or resp.get("result", {}).get("isError", False)
@@ -256,9 +260,9 @@ def run_tests():
             proc.kill()
 
         if stderr_lines:
-            err_summary = [l for l in stderr_lines if "Error" in l or "Traceback" in l]
+            err_summary = [line for line in stderr_lines if "Error" in line or "Traceback" in line]
             if err_summary:
-                print(f"\n  [Server errors]:")
+                print("\n  [Server errors]:")
                 for line in err_summary[:5]:
                     print(f"    {line}")
 
