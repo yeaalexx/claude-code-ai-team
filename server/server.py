@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-Enhanced Multi-AI MCP Server v2.0
-Bidirectional learning between Claude Code and Grok with:
-- Persistent memory for Grok
+Enhanced Multi-AI MCP Server v3.0
+Integration Architecture — Claude + Grok collaboration with:
+- Persistent memory for Grok (with consolidation to prevent unbounded growth)
 - Multi-turn collaboration sessions
 - Agent-style task execution
 - Bidirectional memory synchronization
+- Integration-first protocol for multi-service projects
+- 2-call Grok review pattern (quality+integration, compliance+knowledge)
+- Contract-driven development workflow
+- Increased token budgets for Grok 4.20 multi-agent
 """
 
 import json
@@ -30,7 +34,7 @@ except ImportError:
     import memory  # type: ignore[no-redef]
     import sessions  # type: ignore[no-redef]
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 # Load credentials
 CREDENTIALS_FILE = SCRIPT_DIR / "credentials.json"

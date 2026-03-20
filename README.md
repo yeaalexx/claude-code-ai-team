@@ -1,39 +1,62 @@
 # Claude Code AI Team
 
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
+![Version](https://img.shields.io/badge/version-0.3.0-blue)
 
 **Bidirectional AI collaboration for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Claude and Grok learn from each other, collaborate on solutions, and build shared knowledge that persists forever.**
 
 Claude Code is powerful on its own. But sometimes you want a second opinion — an independent code review, a gut-check on architecture, a fresh perspective on a stubborn bug. This setup gives Claude Code a teammate that *remembers* and *learns*.
 
+## What's New in v3 (Integration Architecture)
+
+v3 solves the **cross-service integration problem**: when AI builds each service beautifully in isolation but fails at integration points (hardcoded values, missing headers, broken contracts).
+
+- **Integration contracts**: Central `INTEGRATION_CONTRACTS.md` + `contracts/` directory define how services talk to each other
+- **Contract-driven development**: Edit the contract first, implement second, verify match
+- **2-call Grok review pattern**: Structured review — Call 1 for quality+integration, Call 2 for compliance+knowledge extraction
+- **Context budget management**: Guidelines for efficient use of Claude's 1M token context window
+- **Learning consolidation**: Prevents unbounded memory growth by pruning low-confidence entries
+- **Doubled Grok token budgets**: Leveraging Grok 4.20's larger context (16K default, 80K sessions)
+- **Auto-bootstrap for multi-service projects**: Detects `services/` or `docker-compose.yml` and creates integration scaffolds
+
+All v2 features (persistent memory, collaboration sessions, agent execution, memory sync) are preserved.
+
 ## What This Does
 
 - **Bidirectional learning**: Both Claude and Grok have persistent memory — they learn from each interaction and carry knowledge forward
+- **Integration-first protocol**: Claude checks cross-service contracts before making changes in multi-service monorepos
 - **Grok has memory**: Grok receives its accumulated learnings as context on every call. It also auto-extracts new learnings from its own responses.
-- **Multi-turn collaboration**: Claude and Grok can have iterative conversations (`grok_collaborate`) with consensus detection — they work toward agreed solutions
+- **Multi-turn collaboration**: Claude and Grok can have iterative conversations (`grok_collaborate`) with consensus detection
 - **Grok as agent**: Give Grok independent tasks (`grok_execute_task`) and get back structured code, plans, or reviews
 - **Persistent cross-project memory**: Learnings from any project automatically benefit all future projects for *both* AIs
-- **Per-project context**: Each project gets its own `AI_TEAM_SYNERGY.md` that's auto-created on first use
-- **Auto-fallback on billing exhaustion**: When xAI credits run out, Claude seamlessly continues solo — no workflow interruption
-- **Zero-config for new projects**: Global rules auto-bootstrap collaboration files in every project you open
+- **Per-project context**: Each project gets its own `AI_TEAM_SYNERGY.md` and optionally `INTEGRATION_CONTRACTS.md`
+- **Auto-fallback on billing exhaustion**: When xAI credits run out, Claude seamlessly continues solo
+- **Zero-config for new projects**: Global rules auto-bootstrap collaboration files in every project
 
 ## Architecture
 
 ```
 Global (shared across all projects):
-  ~/.claude/CLAUDE.md                                    <-- Global rules (collaboration, sync, fallback)
+  ~/.claude/CLAUDE.md                                    <-- Global rules (integration protocol, sync, fallback)
   ~/.claude/ai-team-knowledge.md                         <-- Claude's brain (cross-project learnings)
   ~/.claude.json                                         <-- MCP server registration (user scope)
-  ~/.claude-mcp-servers/multi-ai-collab/                 <-- Enhanced MCP server v2
+  ~/.claude-mcp-servers/multi-ai-collab/                 <-- Enhanced MCP server v3
   ~/.claude-mcp-servers/multi-ai-collab/.venv/           <-- Isolated Python environment
+  ~/.claude-mcp-servers/multi-ai-collab/defaults/        <-- v3 templates (contracts, KB, synergy)
   ~/.claude-mcp-servers/multi-ai-collab/memory/
       +-- grok-memory.json                               <-- Grok's brain (persistent memory)
       +-- sessions/                                      <-- Collaboration session transcripts
 
 Per project (auto-created by Claude):
   ~/projects/any-project/
-      +-- AI_TEAM_SYNERGY.md              <-- Project-specific AI team knowledge
+      +-- AI_TEAM_SYNERGY.md              <-- Project-specific AI team knowledge (rolling log)
+      +-- LEARNINGS_KB.md                 <-- Distilled patterns (categorized, tagged)
       +-- CLAUDE.md                       <-- Project conventions (AI team section auto-added)
+      +-- INTEGRATION_CONTRACTS.md        <-- Cross-service contracts (multi-service projects)
+      +-- contracts/                      <-- Machine-readable API/event/shared contracts
+          +-- registry.md                 <-- Service manifest + dependency matrix
+          +-- apis/                       <-- Per-service API contracts
+          +-- events/catalog.md           <-- Kafka/event schema catalog
+          +-- shared/                     <-- Headers, tenant rules, error codes
 ```
 
 ### Knowledge Flow (Bidirectional)
@@ -87,12 +110,13 @@ cd claude-code-ai-team
 ```
 
 The setup script will:
-1. Install the enhanced MCP server v2 (from this repo's `server/` directory)
+1. Install the enhanced MCP server v3 (from this repo's `server/` directory)
 2. Create an isolated Python venv and install pinned dependencies
 3. Create Grok's memory directory (`memory/grok-memory.json`)
 4. Prompt for your API key(s) and secure the credentials file
 5. Register the MCP server globally (using the venv Python)
 6. Install the global `CLAUDE.md` and knowledge base defaults
+7. Copy v3 templates (contracts, integration, learnings KB) to discoverable location
 
 ### Option B: Manual Setup
 
@@ -103,6 +127,7 @@ The setup script will:
 ```bash
 mkdir -p ~/.claude-mcp-servers/multi-ai-collab/memory/sessions
 cp server/*.py server/credentials.template.json ~/.claude-mcp-servers/multi-ai-collab/
+cp -r defaults/ ~/.claude-mcp-servers/multi-ai-collab/defaults/
 ```
 
 #### 2. Create a venv and install dependencies
@@ -174,18 +199,21 @@ Check the server status for the multi-ai-collab MCP
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `CLAUDE.md` | `~/.claude/CLAUDE.md` | Global rules: auto-bootstrap, collaboration protocol, MCP fallback |
+| `CLAUDE.md` | `~/.claude/CLAUDE.md` | Global rules: integration protocol, auto-bootstrap, collaboration, MCP fallback |
 | `ai-team-knowledge.md` | `~/.claude/ai-team-knowledge.md` | Global knowledge base — learnings from all projects |
-| MCP server | `~/.claude-mcp-servers/multi-ai-collab/` | Enhanced MCP server v2 with bidirectional learning |
+| MCP server | `~/.claude-mcp-servers/multi-ai-collab/` | Enhanced MCP server v3 with integration architecture |
 | Grok memory | `~/.claude-mcp-servers/multi-ai-collab/memory/` | Grok's persistent memory and session transcripts |
+| v3 Templates | `~/.claude-mcp-servers/multi-ai-collab/defaults/` | Contract, KB, and synergy templates for new projects |
 | Python venv | `~/.claude-mcp-servers/multi-ai-collab/.venv/` | Isolated Python environment (no global pip pollution) |
 | Credentials | `~/.claude-mcp-servers/multi-ai-collab/credentials.json` | Your API keys (local only, never committed) |
-| Cred helper | `scripts/update_creds.py` (in this repo) | Writes API keys to credentials.json via stdin |
 
 Per-project files (auto-created by Claude on first task):
 | File | Location | Purpose |
 |------|----------|---------|
-| `AI_TEAM_SYNERGY.md` | Project root | Project-specific AI team knowledge |
+| `AI_TEAM_SYNERGY.md` | Project root | Project-specific AI team knowledge (rolling log) |
+| `LEARNINGS_KB.md` | Project root | Distilled patterns (categorized, tagged) |
+| `INTEGRATION_CONTRACTS.md` | Project root | Cross-service contracts (multi-service projects) |
+| `contracts/` | Project root | API, event, and shared contract files |
 | AI team section in `CLAUDE.md` | Project root | Project-specific collaboration rules |
 
 ## Available Tools
@@ -196,14 +224,14 @@ Once installed, Claude Code gains these MCP tools:
 | Tool | What it does |
 |------|-------------|
 | `ask_grok` | Ask Grok any question (with memory-aware context) |
-| `grok_code_review` | Independent code review (security, performance, readability) |
+| `grok_code_review` | Independent code review (security, performance, integration) |
 | `grok_think_deep` | Extended reasoning on complex problems |
 | `grok_brainstorm` | Creative brainstorming with constraints |
 | `grok_debug` | Debugging help with error context |
 | `grok_architecture` | Architecture design advice |
 | `server_status` | Check which AIs are available + memory stats |
 
-### v2: Bidirectional Learning & Collaboration
+### Bidirectional Learning & Collaboration
 | Tool | What it does |
 |------|-------------|
 | `grok_collaborate` | Multi-turn sessions — both AIs iterate toward an agreed solution with consensus detection |
@@ -215,35 +243,46 @@ Once installed, Claude Code gains these MCP tools:
 ### Multi-AI Tools (when 2+ AIs enabled)
 `ask_all_ais`, `ai_debate`, `collaborative_solve`, `ai_consensus`
 
-## How Collaboration Works in Practice
+## How It Works in Practice
 
-The global `CLAUDE.md` instructs Claude Code to follow these collaboration guidelines. You don't need to explicitly invoke tools — Claude will:
+### For Single-Service Projects
+Claude and Grok collaborate using the v2 workflow: memory sync, code review, collaboration sessions, agent execution. LEARNINGS_KB.md captures patterns.
 
-1. **Sync memory with Grok** at session start (pull Grok's learnings, push Claude's)
-2. **Auto-create `AI_TEAM_SYNERGY.md`** in new projects
-3. **Consult Grok** before major architecture decisions
-4. **Send code to Grok for review** after writing complex logic
-5. **Start collaboration sessions** for complex decisions requiring iteration
-6. **Delegate tasks to Grok** when independent work is beneficial
-7. **Log learnings to all three stores** (Claude's brain, Grok's brain, project brain)
-8. **Fall back to solo mode** if Grok's API returns billing errors
+### For Multi-Service Projects (v3 Integration Architecture)
+On first task, Claude auto-creates:
+1. `INTEGRATION_CONTRACTS.md` — dependency matrix, universal rules, anti-patterns
+2. `contracts/` — per-service API contracts, event catalog, shared headers/tenant/error rules
+3. `LEARNINGS_KB.md` — distilled patterns
 
-> **Note:** These behaviors are driven by the `CLAUDE.md` instructions. Claude follows them as guidelines, so the degree of automation may vary between sessions. You can always invoke tools explicitly for guaranteed collaboration.
+Before every cross-service change, Claude:
+1. Reads the relevant contracts
+2. Implements the change
+3. Runs the **2-call Grok review**:
+   - Call 1 (`grok_code_review`): Quality + Integration compliance
+   - Call 2 (`grok_execute_task`): Compliance + Knowledge extraction
+4. Updates contracts if API changed
+5. Extracts learnings
 
-### Example Prompts
+### The 2-Call Grok Review Pattern
 
 ```
-Ask Grok to review this authentication middleware for security issues
-
-Start a collaboration session with Grok to design the caching strategy
-
-Have Grok independently write the retry logic while I work on the API endpoints
-
-Get Grok's opinion on whether we should use WebSockets or SSE for real-time updates
-
-Have Grok debug this — I've tried 3 approaches and none work
-
-Sync memory with Grok to make sure we're both up to date
+Claude finishes a meaningful change
+        |
+        v
+Call 1: grok_code_review
+  "Review for Quality + Integration.
+   Section 1: Code quality, tests, error handling
+   Section 2: Does this match INTEGRATION_CONTRACTS.md?
+              Header propagation? Event schemas? Hardcoded values?"
+        |
+        v
+Call 2: grok_execute_task (output_format="review")
+  "Review for Compliance + extract learnings.
+   Section 1: Part 11 / regulatory compliance
+   Section 2: Extract 0-3 new learnings for LEARNINGS_KB.md"
+        |
+        v
+Claude applies feedback, updates contracts/learnings
 ```
 
 ## MCP Fallback (Billing Protection)
@@ -256,6 +295,23 @@ When xAI credits run out, Claude automatically:
 
 No workflow interruption. No error spam. Just seamless degradation.
 
+## Migration from v2
+
+v3 is **fully backward compatible** with v2:
+- Your existing `grok-memory.json` (all learnings) works unchanged
+- Existing `AI_TEAM_SYNERGY.md` files are preserved
+- New files (`contracts/`, `INTEGRATION_CONTRACTS.md`, `LEARNINGS_KB.md`) are only auto-created in new projects
+- To adopt v3 in an existing project, ask Claude: *"Set up integration contracts for this project"*
+
+To upgrade:
+```bash
+cd claude-code-ai-team
+git pull
+./setup.ps1   # or ./setup.sh
+```
+
+Then restart VS Code.
+
 ## Uninstall
 
 **macOS / Linux:**
@@ -267,8 +323,6 @@ No workflow interruption. No error spam. Just seamless degradation.
 ```powershell
 .\setup.ps1 -Uninstall
 ```
-
-This removes the MCP server registration, the server directory, and optionally the global knowledge base. The AI team section in `~/.claude/CLAUDE.md` must be removed manually if desired.
 
 ## Customization
 
@@ -285,57 +339,21 @@ Edit `~/.claude-mcp-servers/multi-ai-collab/credentials.json`:
 }
 ```
 
-Available models: `grok-4-1-fast-reasoning` ($0.20/M), `grok-4-1-fast-non-reasoning` ($0.20/M), `grok-3` ($3.00/M)
-
 ### Enable Additional AIs
 
 Add API keys and set `"enabled": true` in `credentials.json` for any combination of Gemini, OpenAI, or DeepSeek.
 
 ### Customize Collaboration Rules
 
-Edit `~/.claude/CLAUDE.md` to change when and how Claude consults Grok. For example, to make Grok reviews mandatory for all PRs, add:
-```markdown
-- **Mandatory review**: Before any git commit, run `grok_code_review` on all changed files.
-```
+Edit `~/.claude/CLAUDE.md` to change when and how Claude consults Grok.
 
-## How It Differs from the Base MCP Server
+## Version History
 
-Originally inspired by [RaiAnsar/claude_code-multi-AI-MCP](https://github.com/RaiAnsar/claude_code-multi-AI-MCP). v2 is a complete rewrite with bidirectional learning:
-
-| Feature | Base MCP Server | v0.1 | v0.2 (Current) |
-|---------|----------------|------|----------------|
-| Claude-to-Grok calls | Yes | Yes | Yes |
-| Grok persistent memory | No | No | **Yes** |
-| Bidirectional learning | No | No | **Yes** |
-| Multi-turn collaboration | No | No | **Yes** |
-| Grok as agent | No | No | **Yes** |
-| Memory synchronization | No | No | **Yes** |
-| Consensus detection | No | No | **Yes** |
-| System prompt injection | No | No | **Yes** |
-| Persistent cross-project memory | No | Yes | Yes |
-| Auto-bootstrap in new projects | No | Yes | Yes |
-| Billing fallback protocol | No | Yes | Yes |
-
-## Troubleshooting
-
-### MCP tools not appearing after restart
-The MCP server must be registered with `--scope user`. Run:
-```bash
-claude mcp add --scope user --transport stdio multi-ai-collab -- \
-  ~/.claude-mcp-servers/multi-ai-collab/.venv/bin/python \
-  ~/.claude-mcp-servers/multi-ai-collab/server.py
-```
-
-### "command not found: claude"
-Install Claude Code CLI globally: `npm install -g @anthropic-ai/claude-code`
-Or use npx: `npx @anthropic-ai/claude-code mcp add ...`
-
-### pip install fails during setup
-The setup script creates an isolated venv. If it fails, check that `python3 -m venv` works on your system. On Debian/Ubuntu you may need: `sudo apt install python3-venv`
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on reporting bugs, suggesting features, and submitting pull requests.
+| Version | Feature | Status |
+|---------|---------|--------|
+| v0.3.0 | Integration Architecture — contracts, 2-call review, context budget, consolidation | **Current** |
+| v0.2.0 | Bidirectional Learning — persistent memory, collaboration, agent execution | Stable |
+| v0.1.0 | Initial Setup — auto-bootstrap, fallback protocol, knowledge base | Stable |
 
 ## Credits
 
