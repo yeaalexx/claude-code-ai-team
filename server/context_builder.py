@@ -19,8 +19,8 @@ except ImportError:
 
 
 # Token budget for system prompt — increased for Grok 4.20's larger context window
-DEFAULT_TOKEN_BUDGET = 16000   # Was 8000; Grok 4.20 has 256K+ context
-SESSION_TOKEN_BUDGET = 80000   # Was 50000; sessions benefit most from extra room
+DEFAULT_TOKEN_BUDGET = 16000  # Was 8000; Grok 4.20 has 256K+ context
+SESSION_TOKEN_BUDGET = 80000  # Was 50000; sessions benefit most from extra room
 
 # Map tool names to learning categories for relevance filtering
 TOOL_CATEGORY_MAP = {
@@ -193,9 +193,7 @@ def _get_relevant_learnings(category: str | None, project: str | None, token_bud
         integration_ids = {e["id"] for e in learnings if e.get("category") in ALWAYS_RELEVANT_CATEGORIES}
         if not integration_ids:
             # None were included naturally — fetch them explicitly
-            extra = memory.query_learnings(
-                categories=list(ALWAYS_RELEVANT_CATEGORIES), project=project, limit=20
-            )
+            extra = memory.query_learnings(categories=list(ALWAYS_RELEVANT_CATEGORIES), project=project, limit=20)
             # Merge without duplicates
             existing_ids = {e["id"] for e in learnings}
             for entry in extra:
