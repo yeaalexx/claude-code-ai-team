@@ -134,7 +134,7 @@ for expected_file in server.py memory.py sessions.py context_builder.py; do
         exit 1
     fi
 done
-echo -e "${GREEN}  Enhanced MCP server v2 installed${NC}"
+echo -e "${GREEN}  Enhanced MCP server v3 installed${NC}"
 
 # -- Step 2: Create venv and install dependencies -----------------------------
 echo ""
@@ -212,16 +212,24 @@ else
     echo -e "${YELLOW}  Global knowledge base already exists. Skipping.${NC}"
 fi
 
+# Copy v3 default templates to a discoverable location
+DEFAULTS_TARGET="$MCP_DIR/defaults"
+mkdir -p "$DEFAULTS_TARGET"
+cp -r "$SCRIPT_DIR/defaults/"* "$DEFAULTS_TARGET/"
+echo -e "${GREEN}  v3 templates installed (contracts, integration, learnings KB)${NC}"
+
 # -- Done ---------------------------------------------------------------------
 echo ""
-echo -e "${GREEN}Setup complete! (v2 — Bidirectional Learning)${NC}"
+echo -e "${GREEN}Setup complete! (v3 — Integration Architecture)${NC}"
 echo ""
-echo "New in v2:"
-echo "  - Grok has persistent memory across sessions"
-echo "  - Bidirectional learning: both AIs learn from each other"
-echo "  - Multi-turn collaboration sessions (grok_collaborate)"
-echo "  - Grok as agent for independent task execution (grok_execute_task)"
-echo "  - Memory sync between Claude and Grok (grok_memory_sync)"
+echo "New in v3:"
+echo "  - Integration-first protocol for multi-service projects"
+echo "  - Contract-driven development (contracts/ templates)"
+echo "  - 2-call Grok review pattern (quality+integration, compliance+knowledge)"
+echo "  - Context budget management (efficient 1M token window usage)"
+echo "  - Learning consolidation (prevents unbounded memory growth)"
+echo "  - Doubled Grok token budgets (leveraging Grok 4.20)"
+echo "  - All v2 features: persistent memory, collaboration, agent execution"
 echo ""
 echo "Next steps:"
 echo "  1. Restart VS Code (or open a new Claude Code CLI session)"

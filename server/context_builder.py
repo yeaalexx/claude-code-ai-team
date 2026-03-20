@@ -1,5 +1,5 @@
 """
-Dynamic System Prompt Builder.
+Dynamic System Prompt Builder — v3.0
 
 Assembles Grok's system prompt by injecting:
 1. Identity (always)
@@ -18,9 +18,9 @@ except ImportError:
     import memory  # type: ignore[no-redef]
 
 
-# Token budget for system prompt (conservative — Grok has 131K context)
-DEFAULT_TOKEN_BUDGET = 8000
-SESSION_TOKEN_BUDGET = 50000  # Sessions get more room
+# Token budget for system prompt — increased for Grok 4.20's larger context window
+DEFAULT_TOKEN_BUDGET = 16000   # Was 8000; Grok 4.20 has 256K+ context
+SESSION_TOKEN_BUDGET = 80000   # Was 50000; sessions benefit most from extra room
 
 # Map tool names to learning categories for relevance filtering
 TOOL_CATEGORY_MAP = {
@@ -33,6 +33,9 @@ TOOL_CATEGORY_MAP = {
     "grok_collaborate": None,
     "grok_execute_task": None,
 }
+
+# Categories that are always relevant in multi-service / cross-cutting contexts
+ALWAYS_RELEVANT_CATEGORIES = {"integration", "compliance"}
 
 
 def estimate_tokens(text: str) -> int:
@@ -147,7 +150,7 @@ def _get_learning_instructions() -> str:
 You have persistent memory. After each interaction, if you discover something worth
 remembering for future conversations, include a [LEARNING] block at the END of your response:
 
-[LEARNING category="architecture|code|debugging|domain|security|performance|devops|testing|meta"]
+[LEARNING category="architecture|code|debugging|domain|security|performance|devops|testing|integration|compliance|pharma-ux|ui-ux|meta"]
 Brief, reusable insight (1-2 sentences max). Only include learnings useful in future,
 unrelated conversations. Skip learnings specific to only this prompt.
 [/LEARNING]
@@ -174,8 +177,39 @@ you see issues. Both you and Claude benefit from honest evaluation."""
 
 
 def _get_relevant_learnings(category: str | None, project: str | None, token_budget: int) -> str:
-    """Get formatted learnings that fit within the token budget."""
-    learnings = memory.query_learnings(category=category, project=project, limit=50)
+    """Get formatted learnings that fit within the token budget.
+
+    When category is None (for collaborate/execute_task/think_deep), fetches a
+    broader set of learnings to give Grok maximum context. Integration-category
+    learnings get a relevance boost since they're useful in multi-service contexts.
+    """
+    # Broader fetch for uncategorized (general) queries
+    limit = 80 if category is None else 50
+    learnings = memory.query_learnings(category=category, project=project, limit=limit)
+
+    # Relevance boost: when no specific category, also pull in integration/compliance
+    # learnings and interleave them near the top (they're cross-cutting and always useful)
+    if category is None and learnings:
+        integration_ids = {e["id"] for e in learnings if e.get("category") in ALWAYS_RELEVANT_CATEGORIES}
+        if not integration_ids:
+            # None were included naturally — fetch them explicitly
+            extra = memory.query_learnings(
+                categories=list(ALWAYS_RELEVANT_CATEGORIES), project=project, limit=20
+            )
+            # Merge without duplicates
+            existing_ids = {e["id"] for e in learnings}
+            for entry in extra:
+                if entry["id"] not in existing_ids:
+                    learnings.append(entry)
+            # Re-sort: boost integration/compliance by treating them as +0.1 confidence
+            learnings.sort(
+                key=lambda x: (
+                    x.get("confidence", 0.5) + (0.1 if x.get("category") in ALWAYS_RELEVANT_CATEGORIES else 0.0),
+                    x.get("timestamp", ""),
+                ),
+                reverse=True,
+            )
+
     if not learnings:
         return ""
 
@@ -273,6 +307,47 @@ def build_agent_prompt(task: str, files: str = "", constraints: str = "", output
         "### Confidence\nRate your confidence: HIGH / MEDIUM / LOW and explain why.\n"
         "### Caveats\nAny assumptions, limitations, or things to watch out for.\n"
         "### Alternatives Considered\nBriefly mention 1-2 alternative approaches you rejected and why.\n"
+    )
+
+    return prompt
+
+
+def build_integration_review_prompt(code: str, contracts_context: str = "") -> str:
+    """Build a prompt for integration-focused code review (2-call review pattern).
+
+    Formats code alongside service contracts/interfaces so Grok can verify
+    cross-service compatibility, header propagation, tenant isolation, etc.
+
+    Args:
+        code: The code to review
+        contracts_context: Related API contracts, OpenAPI specs, or interface
+            definitions from other services that this code must integrate with
+
+    Returns:
+        Formatted prompt string for Grok's user message
+    """
+    prompt = "## Integration Review\n\n"
+    prompt += (
+        "Review this code with a focus on **cross-service integration correctness**. "
+        "Check for:\n"
+        "- API contract compliance (request/response shapes, status codes)\n"
+        "- Header propagation (Authorization, X-Tenant-ID, X-Request-ID)\n"
+        "- Tenant isolation (tenant context not leaking across boundaries)\n"
+        "- Error handling at service boundaries (timeouts, retries, circuit breaking)\n"
+        "- Data format consistency (dates as ISO 8601, IDs as UUIDs, etc.)\n\n"
+    )
+
+    prompt += f"### Code Under Review\n```\n{code}\n```\n"
+
+    if contracts_context:
+        prompt += f"\n### Related Service Contracts\n```\n{contracts_context}\n```\n"
+
+    prompt += (
+        "\n### Expected Output\n"
+        "1. **Contract violations** — where the code breaks API contracts\n"
+        "2. **Integration risks** — subtle issues that only appear at service boundaries\n"
+        "3. **Missing propagation** — headers/context that should be forwarded but aren't\n"
+        "4. **Recommendations** — specific fixes with code examples\n"
     )
 
     return prompt

@@ -159,7 +159,7 @@ foreach ($expectedFile in @("server.py", "memory.py", "sessions.py", "context_bu
         exit 1
     }
 }
-Write-Host "  Enhanced MCP server v2 installed" -ForegroundColor Green
+Write-Host "  Enhanced MCP server v3 installed" -ForegroundColor Green
 
 # ── Step 2: Create venv and install Python dependencies ────────────────
 Write-Host ""
@@ -311,16 +311,24 @@ if (-not (Test-Path $knowledgeBase)) {
     Write-Host "  Global knowledge base already exists. Skipping." -ForegroundColor DarkYellow
 }
 
+# Copy v3 default templates to a discoverable location
+$defaultsTarget = Join-Path $mcpDir "defaults"
+if (-not (Test-Path $defaultsTarget)) { New-Item -ItemType Directory -Path $defaultsTarget -Force | Out-Null }
+Copy-Item (Join-Path $scriptDir "defaults\*") $defaultsTarget -Recurse -Force
+Write-Host "  v3 templates installed (contracts, integration, learnings KB)" -ForegroundColor Green
+
 # ── Done ───────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "Setup complete! (v2 — Bidirectional Learning)" -ForegroundColor Green
+Write-Host "Setup complete! (v3 — Integration Architecture)" -ForegroundColor Green
 Write-Host ""
-Write-Host "New in v2:" -ForegroundColor Cyan
-Write-Host "  - Grok has persistent memory across sessions"
-Write-Host "  - Bidirectional learning: both AIs learn from each other"
-Write-Host "  - Multi-turn collaboration sessions (grok_collaborate)"
-Write-Host "  - Grok as agent for independent task execution (grok_execute_task)"
-Write-Host "  - Memory sync between Claude and Grok (grok_memory_sync)"
+Write-Host "New in v3:" -ForegroundColor Cyan
+Write-Host "  - Integration-first protocol for multi-service projects"
+Write-Host "  - Contract-driven development (contracts/ templates)"
+Write-Host "  - 2-call Grok review pattern (quality+integration, compliance+knowledge)"
+Write-Host "  - Context budget management (efficient 1M token window usage)"
+Write-Host "  - Learning consolidation (prevents unbounded memory growth)"
+Write-Host "  - Doubled Grok token budgets (leveraging Grok 4.20)"
+Write-Host "  - All v2 features: persistent memory, collaboration, agent execution"
 Write-Host ""
 Write-Host "Next steps:"
 Write-Host "  1. Restart VS Code (or open a new Claude Code CLI session)"

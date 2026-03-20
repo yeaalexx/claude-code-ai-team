@@ -17,47 +17,45 @@
 
 ## MCP Fallback Rules
 
-If any external AI tool (especially Grok) returns **any** of these signals:
-- "insufficient funds", "insufficient_quota", "payment required", "credit balance too low"
-- "rate_limit_exceeded", "billing", "quota", HTTP 402/429 with billing context
-- Any authentication/billing error from xAI API
-
-**Then immediately:**
+If any external AI tool (especially Grok) returns billing/quota errors:
 1. Stop trying that tool for the remainder of this session.
 2. Set mental flag: `GROK_AVAILABLE = false` for this session.
 3. Continue with pure Claude reasoning.
 4. Do NOT mention the failure more than once.
-5. Only suggest "Add xAI credits if you want Grok back" if the user explicitly asks about external models.
 
 ---
 
 ## When to Consult Grok (Claude's guide)
 
-Use Grok as a **gut-check agent** in these scenarios:
-- **Architecture decisions**: Before committing to a major design choice, ask Grok for a second opinion via `ask_grok`.
-- **Code review**: After writing complex logic, send it to `grok_code_review` for an independent review.
-- **Debugging dead-ends**: When stuck for >2 attempts on the same bug, ask `grok_debug` for a fresh perspective.
-- **Domain knowledge**: Grok may have different training data — consult on ambiguous questions.
-- **Trade-off analysis**: Use `grok_think_deep` when evaluating competing approaches.
+| Task Type | Grok Pattern | Tool |
+|-----------|-------------|------|
+| Architecture decisions | Second opinion before committing | `grok_collaborate` |
+| Code review | Independent review after complex logic | `grok_code_review` |
+| Cross-service integration | **Mandatory** contract check + 2-call review | `grok_code_review` + `grok_execute_task` |
+| Debugging dead-ends (>2 tries) | Fresh perspective | `grok_debug` |
+| Trade-off analysis | Deep extended reasoning | `grok_think_deep` |
+| Writing new code files | Parallel implementation to compare | `grok_execute_task` |
+| Trivial fixes | Skip Grok | — |
 
-### v2 Collaboration Tools
-- **`grok_collaborate`**: Multi-turn sessions where both AIs iterate toward an agreed solution. Use for architecture decisions, complex debugging, design reviews.
-- **`grok_execute_task`**: Give Grok a task to solve independently as an agent. Grok returns structured results (code, plans, reviews) that Claude reviews and applies.
-- **`grok_memory_sync`**: Push Claude's learnings to Grok (`push`), pull Grok's learnings (`pull`), or check status (`status`).
-- **`grok_session_end`**: End a collaboration session and extract learnings from the full conversation.
-- **`grok_memory_status`**: View Grok's memory state (learning counts, projects, categories).
+---
 
-Do NOT use Grok for:
-- Trivial tasks (simple file edits, formatting, obvious fixes)
-- Tasks where latency matters more than accuracy
-- When GROK_AVAILABLE = false (see fallback rules above)
+## Rolling Maintenance
+
+This file covers the **last ~25 sprints** only. When it exceeds ~25KB:
+1. Move older entries to `memory/sprint-summaries/synergy-sprints-<range>.md`
+2. Keep only the most recent entries here
+3. Distill key patterns into `LEARNINGS_KB.md`
 
 ---
 
 ## Lessons Learned
 
 ### Architecture & Design
-<!-- Append new entries here. Format: [DATE] Source: Claude|Grok -- Lesson -->
+<!-- Append: [YYYY-MM-DD] [Sprint X] Lesson. **Why:** reason. -->
+
+
+### Integration Patterns
+<!-- Cross-service learnings. What breaks at integration points. -->
 
 
 ### Code Patterns & Best Practices
@@ -68,12 +66,12 @@ Do NOT use Grok for:
 <!-- Append new entries here -->
 
 
-### Domain Knowledge
-<!-- Append new entries here -->
+### Compliance & Security
+<!-- Pharma, Part 11, tenant isolation patterns -->
 
 
 ### Corrections & Disagreements
-<!-- When one AI corrects the other, log it here so we don't repeat mistakes -->
+<!-- When one AI corrects the other, log it here -->
 
 
 ---

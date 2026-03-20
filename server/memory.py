@@ -1,5 +1,5 @@
 """
-Grok's Persistent Memory System.
+Grok's Persistent Memory System — v3.0
 
 Manages a JSON-based memory store that gives Grok persistent knowledge
 across calls and sessions. The server injects relevant memories into
@@ -182,12 +182,29 @@ def update_project_context(project: str, tech_stack: str = "", summary: str = ""
     save_memory(memory)
 
 
-def query_learnings(category: str | None = None, project: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
-    """Query learnings filtered by category and/or project."""
+def query_learnings(
+    category: str | None = None,
+    categories: list[str] | None = None,
+    project: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Query learnings filtered by category/categories and/or project.
+
+    Args:
+        category: Single category to filter by (backward compatible).
+        categories: List of categories — returns learnings matching ANY.
+            When both category and categories are provided, categories takes precedence.
+        project: Filter to this project + general (no-project) learnings.
+        limit: Maximum number of results to return.
+    """
     memory = load_memory()
     results = memory.get("learnings", [])
 
-    if category and category != "all":
+    # Category filtering — categories (plural) takes precedence over category (singular)
+    if categories:
+        cat_set = set(categories)
+        results = [r for r in results if r["category"] in cat_set]
+    elif category and category != "all":
         results = [r for r in results if r["category"] == category]
 
     if project:
@@ -236,6 +253,111 @@ def record_call(tool_name: str) -> None:
     by_tool = stats.setdefault("calls_by_tool", {})
     by_tool[tool_name] = by_tool.get(tool_name, 0) + 1
     save_memory(memory)
+
+
+def consolidate_learnings(category: str | None = None, max_per_category: int = 50) -> int:
+    """Consolidate learnings to prevent unbounded growth.
+
+    Groups learnings by category. If any category exceeds max_per_category,
+    keeps only the highest-confidence entries and prunes the rest.
+
+    Args:
+        category: If provided, only consolidate this category. Otherwise all.
+        max_per_category: Maximum learnings to keep per category.
+
+    Returns:
+        Count of pruned entries.
+    """
+    mem = load_memory()
+    learnings = mem.get("learnings", [])
+    if not learnings:
+        return 0
+
+    # Group by category
+    by_cat: dict[str, list[dict[str, Any]]] = {}
+    for entry in learnings:
+        cat = entry.get("category", "uncategorized")
+        by_cat.setdefault(cat, []).append(entry)
+
+    pruned_count = 0
+    keep_ids: set[str] = set()
+
+    for cat, entries in by_cat.items():
+        if category and cat != category:
+            # Not targeted — keep all
+            for e in entries:
+                keep_ids.add(e["id"])
+            continue
+
+        if len(entries) <= max_per_category:
+            for e in entries:
+                keep_ids.add(e["id"])
+            continue
+
+        # Too many — sort by confidence desc, then timestamp desc, keep top N
+        entries.sort(
+            key=lambda x: (x.get("confidence", 0.5), x.get("timestamp", "")),
+            reverse=True,
+        )
+        for e in entries[:max_per_category]:
+            keep_ids.add(e["id"])
+        pruned_count += len(entries) - max_per_category
+
+    if pruned_count > 0:
+        mem["learnings"] = [e for e in learnings if e["id"] in keep_ids]
+        mem["statistics"]["learnings_count"] = len(mem["learnings"])
+        save_memory(mem)
+
+    return pruned_count
+
+
+def get_learning_summary(max_tokens: int = 4000) -> str:
+    """Return a condensed summary of all learnings grouped by category.
+
+    Each category gets a count plus up to 3 of the most confident learnings.
+    Useful for quick context injection without sending all learnings.
+
+    Args:
+        max_tokens: Approximate token budget for the summary.
+
+    Returns:
+        Formatted summary string.
+    """
+    mem = load_memory()
+    learnings = mem.get("learnings", [])
+    if not learnings:
+        return "No learnings stored yet."
+
+    # Group by category
+    by_cat: dict[str, list[dict[str, Any]]] = {}
+    for entry in learnings:
+        cat = entry.get("category", "uncategorized")
+        by_cat.setdefault(cat, []).append(entry)
+
+    lines = ["## Learning Summary"]
+    # Rough estimate: 3.5 chars per token
+    chars_budget = int(max_tokens * 3.5)
+    chars_used = len(lines[0])
+
+    # Sort categories by count (most entries first)
+    for cat in sorted(by_cat, key=lambda c: len(by_cat[c]), reverse=True):
+        entries = by_cat[cat]
+        header = f"\n### {cat} ({len(entries)} learnings)"
+        if chars_used + len(header) > chars_budget:
+            break
+        lines.append(header)
+        chars_used += len(header)
+
+        # Top 3 by confidence
+        entries.sort(key=lambda x: x.get("confidence", 0.5), reverse=True)
+        for entry in entries[:3]:
+            line = f"- {entry['content']}"
+            if chars_used + len(line) > chars_budget:
+                break
+            lines.append(line)
+            chars_used += len(line)
+
+    return "\n".join(lines)
 
 
 # --- Learning Extraction from Grok Responses ---
@@ -297,6 +419,13 @@ def bulk_push_learnings(learnings_text: str, source: str = "claude", project: st
 def _detect_category(text: str) -> str:
     """Simple heuristic to detect learning category from content."""
     text_lower = text.lower()
+    # Check more specific categories first to avoid false positives
+    if any(w in text_lower for w in ["compliance", "part 11", "fda", "audit trail", "21 cfr"]):
+        return "compliance"
+    if any(w in text_lower for w in ["integration", "contract", "cross-service", "header propagation", "x-tenant"]):
+        return "integration"
+    if any(w in text_lower for w in ["pharma", "eln", "formulation", "ontology", "specimen"]):
+        return "pharma-eln"
     if any(w in text_lower for w in ["architect", "design", "pattern", "schema", "tenant", "microservice"]):
         return "architecture"
     if any(w in text_lower for w in ["bug", "debug", "error", "fix", "crash", "exception"]):
