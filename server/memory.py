@@ -155,10 +155,7 @@ def add_learning(source: str, category: str, content: str, project: str = "", co
 
     # Also add to RAG if available
     try:
-        try:
-            from server import rag_memory
-        except ImportError:
-            import rag_memory  # type: ignore[no-redef]
+        import rag_memory  # type: ignore[import-untyped]
 
         rag_memory.add_learning(
             source=source,
@@ -183,10 +180,7 @@ def migrate_to_rag() -> int:
         return 0
 
     try:
-        try:
-            from server import rag_memory
-        except ImportError:
-            import rag_memory  # type: ignore[no-redef]
+        import rag_memory  # type: ignore[import-untyped]
 
         return rag_memory.migrate_from_json(MEMORY_FILE)
     except Exception as e:

@@ -200,10 +200,7 @@ def _get_relevant_learnings_rag(
     Falls back to empty string if RAG is not available.
     """
     try:
-        try:
-            from server import rag_memory
-        except ImportError:
-            import rag_memory  # type: ignore[no-redef]
+        import rag_memory  # type: ignore[import-untyped]
 
         if not rag_memory._is_available():
             return ""
