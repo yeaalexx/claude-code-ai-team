@@ -131,6 +131,7 @@ def save_memory(memory: dict[str, Any]) -> None:
 
 def add_learning(source: str, category: str, content: str, project: str = "", confidence: float = 0.8) -> str:
     """Add a learning to Grok's memory. Returns the learning ID."""
+    category = normalize_category(category)
     memory = load_memory()
 
     # Deduplication: skip if first 80 chars match an existing learning in same category
@@ -416,7 +417,7 @@ def extract_learnings(response_text: str) -> list[dict[str, str]]:
     for category, content in matches:
         content = content.strip()
         if content and len(content) > 10:  # Skip trivially short learnings
-            learnings.append({"category": category.lower(), "content": content})
+            learnings.append({"category": normalize_category(category.lower()), "content": content})
     return learnings
 
 
@@ -454,8 +455,116 @@ def bulk_push_learnings(learnings_text: str, source: str = "claude", project: st
     return count
 
 
+# Canonical category map — normalizes variant spellings to canonical names.
+# This prevents fragmentation (e.g., "database design" vs "database-design" vs "database").
+_CATEGORY_ALIASES: dict[str, str] = {
+    # compliance variants
+    "pharma compliance": "compliance",
+    "pharma-compliance": "compliance",
+    "ui-ux-compliance": "compliance",
+    "aws-compliance": "compliance",
+    # architecture variants
+    "ai architecture": "architecture",
+    "security architecture": "architecture",
+    "multi-tenant-architecture": "architecture",
+    "saas-architecture": "architecture",
+    "microservices-architecture": "architecture",
+    "kafka-architecture": "architecture",
+    "integration_architecture": "architecture",
+    "module architecture": "architecture",
+    # database variants
+    "database design": "database",
+    "database-design": "database",
+    "schema-design": "database",
+    "data-modeling": "database",
+    # debugging variants
+    "debugging": "debugging",
+    # devops variants
+    "docker": "devops",
+    "terraform": "devops",
+    "ci-cd": "devops",
+    "devops-scaling": "devops",
+    "infra-migration": "devops",
+    "deployment prioritization": "devops",
+    "iac best practices": "devops",
+    # security variants
+    "aws-security": "security",
+    "auth-rbac": "security",
+    "access-control": "security",
+    # frontend variants
+    "frontend-ux": "frontend",
+    "frontend-drag-drop": "frontend",
+    "frontend-patterns": "frontend",
+    # ui variants
+    "ui-design": "ui-ux",
+    "ui": "ui-ux",
+    "layout": "ui-ux",
+    # pharma variants
+    "pharma-ux": "pharma-eln",
+    "pharma-kg": "pharma-eln",
+    "pharma-mlops": "pharma-eln",
+    "pharma-ops": "pharma-eln",
+    "pharma-adoption": "pharma-eln",
+    "pharma futurism": "pharma-eln",
+    # performance variants
+    "perf": "performance",
+    "performance-security": "performance",
+    "simulations-perf": "performance",
+    # best practices variants
+    "best practices": "best-practices",
+    # collaboration variants
+    "collaboration process": "collaboration",
+    "collaboration-process": "collaboration",
+    "consensus-building": "collaboration",
+    # sprint/process variants
+    "sprint-kickoff": "sprint-planning",
+    "sprint-scoping": "sprint-planning",
+    "sprint naming": "sprint-planning",
+    # product variants
+    "product-strategy": "product",
+    "product-phasing": "product",
+    "product-positioning": "product",
+    # integration variants
+    "integration_protocol": "integration",
+    # memory/process meta
+    "memory_management": "meta",
+    "review_workflow": "meta",
+    "review_protocol": "meta",
+    "enforcement_knowledge": "meta",
+    "knowledge_compounding": "meta",
+    "demonstration_technique": "meta",
+    "process": "meta",
+    "scalability": "architecture",
+}
+
+
+def normalize_category(category: str) -> str:
+    """Normalize a category to its canonical form."""
+    c = category.strip().lower()
+    return _CATEGORY_ALIASES.get(c, c)
+
+
+def normalize_all_categories() -> int:
+    """Normalize all learning categories in memory to canonical forms.
+
+    Returns count of learnings whose category was changed.
+    """
+    mem = load_memory()
+    learnings = mem.get("learnings", [])
+    changed = 0
+    for entry in learnings:
+        old_cat = entry.get("category", "")
+        new_cat = normalize_category(old_cat)
+        if new_cat != old_cat:
+            entry["category"] = new_cat
+            changed += 1
+    if changed > 0:
+        save_memory(mem)
+    return changed
+
+
 def _detect_category(text: str) -> str:
-    """Simple heuristic to detect learning category from content."""
+    """Heuristic to detect learning category from content. Returns canonical category."""
     text_lower = text.lower()
     # Check more specific categories first to avoid false positives
     if any(w in text_lower for w in ["compliance", "part 11", "fda", "audit trail", "21 cfr"]):
