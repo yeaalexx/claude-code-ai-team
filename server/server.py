@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 # Ensure UTF-8 output (critical on Windows where default is cp1252)
@@ -40,7 +42,7 @@ except ImportError:
     import rag_memory  # type: ignore[no-redef]
     import sessions  # type: ignore[no-redef]
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 
 # Load credentials
 CREDENTIALS_FILE = SCRIPT_DIR / "credentials.json"
@@ -263,6 +265,83 @@ def call_ai_parallel(
                 results[idx]["result"] = f"Error: {e!s}"
 
     return results
+
+
+# ─── Grok Multi-Agent Call (Responses API) ───────────────────────────────────
+
+
+def call_grok_multi_agent(
+    prompt: str,
+    temperature: float = 0.7,
+    system_prompt: str | None = None,
+    tool_name: str = "",
+    project: str = "",
+) -> str:
+    """Call Grok's multi-agent model via the /v1/responses endpoint.
+
+    The multi-agent model (grok-4.20-multi-agent-0309) uses an internal team
+    of AI agents that deliberate before answering.  It requires the Responses
+    API (``/v1/responses``) instead of Chat Completions, with ``input`` instead
+    of ``messages`` and a different response structure.
+
+    This is 10-30x more expensive per call — use only for complex tasks.
+    """
+    grok_creds = CREDENTIALS.get("grok", {})
+    if not grok_creds.get("enabled", False):
+        return "Error: Grok is not available or not configured"
+
+    api_key = grok_creds["api_key"]
+    base_url = grok_creds.get("base_url", "https://api.x.ai/v1")
+    model = grok_creds.get("multi_agent_model", "grok-4.20-multi-agent-0309")
+
+    # Build the input text — combine system prompt + user prompt
+    input_text = prompt
+    if system_prompt:
+        input_text = f"{system_prompt}\n\n---\n\n{prompt}"
+
+    # Record the call in stats
+    if tool_name:
+        memory.record_call(tool_name)
+
+    try:
+        url = f"{base_url}/responses"
+        payload = {
+            "model": model,
+            "input": input_text,
+            "max_output_tokens": 16384,
+            "temperature": temperature,
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+
+        # Extract text from Responses API format:
+        #   data["output"][0]["content"][0]["text"]
+        result_text = data["output"][0]["content"][0]["text"]
+
+        # Auto-extract and save learnings (same pattern as call_ai)
+        extracted = memory.extract_learnings(result_text)
+        for learning in extracted:
+            memory.add_learning(
+                source="grok-multi-agent",
+                category=learning["category"],
+                content=learning["content"],
+                project=project,
+                confidence=0.90,
+            )
+
+        return result_text
+
+    except httpx.HTTPStatusError as e:
+        return f"Error calling Grok multi-agent (HTTP {e.response.status_code}): {e.response.text}"
+    except Exception as e:
+        return f"Error calling Grok multi-agent: {e!s}"
 
 
 # ─── MCP Protocol Handlers ──────────────────────────────────────────────────
@@ -694,6 +773,35 @@ def handle_tools_list(request_id: Any) -> dict[str, Any]:
                     "required": ["task"],
                 },
             },
+            {
+                "name": "grok_multi_agent",
+                "description": (
+                    "Use Grok's multi-agent team (4 AI agents deliberate internally) for complex analysis. "
+                    "More powerful but 10-30x more expensive than regular Grok. "
+                    "Use for: architecture reviews, complex debugging, compliance analysis, design decisions. "
+                    "Do NOT use for simple questions."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "The complex question or analysis request",
+                        },
+                        "context": {
+                            "type": "string",
+                            "description": "Additional context, code, or constraints",
+                            "default": "",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Project name for memory context",
+                            "default": "",
+                        },
+                    },
+                    "required": ["prompt"],
+                },
+            },
         ]
     )
 
@@ -747,6 +855,9 @@ def _dispatch_tool(tool_name: str, arguments: dict[str, Any]) -> str:
 
     if tool_name == "grok_retrieve_context":
         return _handle_grok_retrieve_context(arguments)
+
+    if tool_name == "grok_multi_agent":
+        return _handle_grok_multi_agent(arguments)
 
     # ── Multi-AI tools ───────────────────────────────────────────────────
 
@@ -1306,6 +1417,47 @@ def _handle_grok_retrieve_context(arguments: dict[str, Any]) -> str:
             output += f" (project: {entry['project']})"
         output += "\n"
     return output
+
+
+def _handle_grok_multi_agent(arguments: dict[str, Any]) -> str:
+    """Handle Grok multi-agent calls for complex analysis tasks."""
+    prompt = arguments.get("prompt", "")
+    context = arguments.get("context", "")
+    project = arguments.get("project", "")
+
+    if not prompt:
+        return "Error: 'prompt' is required"
+
+    grok_creds = CREDENTIALS.get("grok", {})
+    if not grok_creds.get("enabled", False):
+        return "Error: Grok is not available or not configured"
+
+    # Build system prompt with memory context
+    sys_prompt = context_builder.build_system_prompt(
+        tool_name="grok_multi_agent",
+        project=project,
+        extra_instructions=(
+            "You are Grok's multi-agent team — a group of AI agents deliberating together. "
+            "Provide thorough, well-reasoned analysis. This tool is reserved for complex tasks "
+            "that benefit from multi-perspective deliberation."
+        ),
+    )
+
+    # Combine prompt and context
+    full_prompt = prompt
+    if context:
+        full_prompt = f"{prompt}\n\n## Additional Context\n{context}"
+
+    result = call_grok_multi_agent(
+        prompt=full_prompt,
+        temperature=0.6,
+        system_prompt=sys_prompt,
+        tool_name="grok_multi_agent",
+        project=project,
+    )
+
+    display_text = memory.strip_learning_blocks(result)
+    return f"GROK MULTI-AGENT RESULT:\n\n{display_text}"
 
 
 # ── Legacy Multi-AI Handlers ────────────────────────────────────────────────
