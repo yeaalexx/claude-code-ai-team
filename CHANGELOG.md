@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.0.0] - 2026-03-21
+
+### Added
+- **RAG Semantic Memory** (`server/rag_memory.py`): New module providing semantic search over learnings using ChromaDB with built-in lightweight embeddings (onnxruntime, no torch required)
+  - Persistent ChromaDB client at `~/.claude-mcp-servers/multi-ai-collab/memory/chroma/`
+  - `query_relevant()` — semantic search by natural language query with optional category/project filters
+  - `add_learning()` — writes to both ChromaDB and JSON for backward compatibility
+  - `migrate_from_json()` — idempotent one-time migration of existing grok-memory.json learnings
+  - `get_stats()` — collection count and category breakdown
+  - Graceful fallback: all functions return empty/no-op if chromadb is not installed
+- **Parallel Grok Calls** (`call_ai_parallel()`): Fires multiple Grok calls simultaneously using `ThreadPoolExecutor`, returns all results in order
+- **`grok_multi_review` tool**: Replaces the manual 2-call review pattern — fires quality+integration AND compliance+knowledge calls in parallel, returns combined result
+- **`grok_retrieve_context` tool**: Queries RAG for relevant learnings without calling Grok — zero API cost context retrieval
+- **RAG-aware context builder**: `_get_relevant_learnings_rag()` uses the task description as semantic search query; `_get_relevant_learnings()` tries RAG first, falls back to JSON filtering
+- **`task_description` parameter** on `build_system_prompt()`: enables RAG-based learning selection for any tool call
+
+### Changed
+- **Server version**: 3.0.0 -> 4.0.0
+- **memory.py**: `add_learning()` now also writes to ChromaDB when available; new `migrate_to_rag()` function
+- **context_builder.py**: `_get_relevant_learnings()` tries RAG semantic search first, falls back to category-based JSON filtering
+- **Server startup**: Initializes RAG memory and runs idempotent JSON-to-ChromaDB migration
+- **Setup scripts**: Copy `rag_memory.py`, note about first-run embedding model download
+- **requirements.txt**: Added `chromadb==0.6.3`
+
+### Migration from v0.3.0
+- **No breaking changes**: All v3 functionality is preserved
+- **Memory is preserved**: Existing `grok-memory.json` works unchanged; learnings are automatically migrated to ChromaDB on first startup
+- **RAG is optional**: If chromadb is not installed, the server falls back to JSON-based filtering (same as v3)
+- To upgrade: run `setup.ps1`/`setup.sh` to update server code and install chromadb
+- First run after upgrade will be slower (downloading ~200MB embedding model)
+
 ## [0.3.0] - 2026-03-20
 
 ### Added

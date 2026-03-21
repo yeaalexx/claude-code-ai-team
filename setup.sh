@@ -120,7 +120,7 @@ echo "Step 1: Installing enhanced MCP server (v2 with bidirectional learning)...
 mkdir -p "$MCP_DIR"
 
 # Copy server modules from this repo
-for src_file in server.py memory.py sessions.py context_builder.py __init__.py credentials.template.json; do
+for src_file in server.py memory.py sessions.py context_builder.py rag_memory.py __init__.py credentials.template.json; do
     cp "$SCRIPT_DIR/server/$src_file" "$MCP_DIR/$src_file"
 done
 
@@ -134,7 +134,7 @@ for expected_file in server.py memory.py sessions.py context_builder.py; do
         exit 1
     fi
 done
-echo -e "${GREEN}  Enhanced MCP server v3 installed${NC}"
+echo -e "${GREEN}  Enhanced MCP server v4 installed${NC}"
 
 # -- Step 2: Create venv and install dependencies -----------------------------
 echo ""
@@ -153,6 +153,7 @@ pip_output=$("$VENV_PYTHON" -m pip install -r "$SCRIPT_DIR/requirements.txt" 2>&
     exit 1
 }
 echo -e "${GREEN}  Dependencies installed into $VENV_DIR${NC}"
+echo -e "${YELLOW}  Note: First run after v4 upgrade may be slower (downloading embedding model for RAG)${NC}"
 
 # -- Step 3: Configure credentials --------------------------------------------
 echo ""
@@ -220,16 +221,14 @@ echo -e "${GREEN}  v3 templates installed (contracts, integration, learnings KB)
 
 # -- Done ---------------------------------------------------------------------
 echo ""
-echo -e "${GREEN}Setup complete! (v3 — Integration Architecture)${NC}"
+echo -e "${GREEN}Setup complete! (v4 — RAG Memory + Parallel Calls)${NC}"
 echo ""
-echo "New in v3:"
-echo "  - Integration-first protocol for multi-service projects"
-echo "  - Contract-driven development (contracts/ templates)"
-echo "  - 2-call Grok review pattern (quality+integration, compliance+knowledge)"
-echo "  - Context budget management (efficient 1M token window usage)"
-echo "  - Learning consolidation (prevents unbounded memory growth)"
-echo "  - Doubled Grok token budgets (leveraging Grok 4.20)"
-echo "  - All v2 features: persistent memory, collaboration, agent execution"
+echo "New in v4:"
+echo "  - RAG semantic memory (ChromaDB) — find relevant learnings by meaning, not just category"
+echo "  - Parallel Grok calls — 2-call review pattern runs both calls simultaneously"
+echo "  - grok_multi_review tool — single call runs quality+integration AND compliance+knowledge in parallel"
+echo "  - grok_retrieve_context tool — get relevant learnings without calling Grok (zero API cost)"
+echo "  - All v3 features: integration contracts, consolidation, context budget, Grok 4.20 budgets"
 echo ""
 echo "Next steps:"
 echo "  1. Restart VS Code (or open a new Claude Code CLI session)"

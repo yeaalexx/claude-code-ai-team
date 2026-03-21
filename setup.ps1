@@ -142,7 +142,7 @@ if (-not (Test-Path $mcpDir)) { New-Item -ItemType Directory -Path $mcpDir -Forc
 
 # Copy server modules from this repo
 $serverSrcDir = Join-Path $scriptDir "server"
-foreach ($srcFile in @("server.py", "memory.py", "sessions.py", "context_builder.py", "__init__.py", "credentials.template.json")) {
+foreach ($srcFile in @("server.py", "memory.py", "sessions.py", "context_builder.py", "rag_memory.py", "__init__.py", "credentials.template.json")) {
     Copy-Item (Join-Path $serverSrcDir $srcFile) (Join-Path $mcpDir $srcFile) -Force
 }
 
@@ -159,7 +159,7 @@ foreach ($expectedFile in @("server.py", "memory.py", "sessions.py", "context_bu
         exit 1
     }
 }
-Write-Host "  Enhanced MCP server v3 installed" -ForegroundColor Green
+Write-Host "  Enhanced MCP server v4 installed" -ForegroundColor Green
 
 # ── Step 2: Create venv and install Python dependencies ────────────────
 Write-Host ""
@@ -184,6 +184,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 Write-Host "  Dependencies installed into $venvDir" -ForegroundColor Green
+Write-Host "  Note: First run after v4 upgrade may be slower (downloading embedding model for RAG)" -ForegroundColor DarkYellow
 
 # ── Step 3: Configure credentials ──────────────────────────────────────
 Write-Host ""
@@ -319,16 +320,14 @@ Write-Host "  v3 templates installed (contracts, integration, learnings KB)" -Fo
 
 # ── Done ───────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "Setup complete! (v3 — Integration Architecture)" -ForegroundColor Green
+Write-Host "Setup complete! (v4 — RAG Memory + Parallel Calls)" -ForegroundColor Green
 Write-Host ""
-Write-Host "New in v3:" -ForegroundColor Cyan
-Write-Host "  - Integration-first protocol for multi-service projects"
-Write-Host "  - Contract-driven development (contracts/ templates)"
-Write-Host "  - 2-call Grok review pattern (quality+integration, compliance+knowledge)"
-Write-Host "  - Context budget management (efficient 1M token window usage)"
-Write-Host "  - Learning consolidation (prevents unbounded memory growth)"
-Write-Host "  - Doubled Grok token budgets (leveraging Grok 4.20)"
-Write-Host "  - All v2 features: persistent memory, collaboration, agent execution"
+Write-Host "New in v4:" -ForegroundColor Cyan
+Write-Host "  - RAG semantic memory (ChromaDB) — find relevant learnings by meaning, not just category"
+Write-Host "  - Parallel Grok calls — 2-call review pattern runs both calls simultaneously"
+Write-Host "  - grok_multi_review tool — single call runs quality+integration AND compliance+knowledge in parallel"
+Write-Host "  - grok_retrieve_context tool — get relevant learnings without calling Grok (zero API cost)"
+Write-Host "  - All v3 features: integration contracts, consolidation, context budget, Grok 4.20 budgets"
 Write-Host ""
 Write-Host "Next steps:"
 Write-Host "  1. Restart VS Code (or open a new Claude Code CLI session)"

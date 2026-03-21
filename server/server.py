@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """
-Enhanced Multi-AI MCP Server v3.0
-Integration Architecture — Claude + Grok collaboration with:
+Enhanced Multi-AI MCP Server v4.0
+RAG Memory + Parallel Calls — Claude + Grok collaboration with:
+- RAG-based semantic memory retrieval (ChromaDB)
+- Parallel Grok calls for the 2-call review pattern
 - Persistent memory for Grok (with consolidation to prevent unbounded growth)
 - Multi-turn collaboration sessions
 - Agent-style task execution
 - Bidirectional memory synchronization
 - Integration-first protocol for multi-service projects
-- 2-call Grok review pattern (quality+integration, compliance+knowledge)
 - Contract-driven development workflow
 - Increased token budgets for Grok 4.20 multi-agent
 """
 
 import json
+import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Ensure UTF-8 output (critical on Windows where default is cp1252)
 if hasattr(sys.stdout, "reconfigure"):
@@ -28,13 +33,14 @@ sys.path.insert(0, str(SCRIPT_DIR.parent))
 sys.path.insert(0, str(SCRIPT_DIR))
 
 try:
-    from server import context_builder, memory, sessions
+    from server import context_builder, memory, rag_memory, sessions
 except ImportError:
     import context_builder  # type: ignore[no-redef]
     import memory  # type: ignore[no-redef]
+    import rag_memory  # type: ignore[no-redef]
     import sessions  # type: ignore[no-redef]
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 
 # Load credentials
 CREDENTIALS_FILE = SCRIPT_DIR / "credentials.json"
@@ -106,6 +112,17 @@ if CREDENTIALS.get("deepseek", {}).get("enabled", False):
 MEMORY_BASE = Path.home() / ".claude-mcp-servers" / "multi-ai-collab"
 memory.initialize(MEMORY_BASE)
 sessions.initialize(MEMORY_BASE)
+
+# Initialize RAG memory (ChromaDB) — non-blocking, graceful fallback
+rag_memory.initialize(MEMORY_BASE)
+
+# Migrate existing JSON learnings to RAG (idempotent, runs once per collection)
+try:
+    _migrated = memory.migrate_to_rag()
+    if _migrated > 0:
+        print(f"RAG: Migrated {_migrated} learnings from JSON to ChromaDB", file=sys.stderr)
+except Exception as _e:
+    print(f"RAG migration skipped: {_e}", file=sys.stderr)
 
 
 # ─── Core AI Call Function (Enhanced) ────────────────────────────────────────
@@ -209,6 +226,43 @@ def call_multiple_ais(prompt: str, ai_list: list[str], temperature: float = 0.7)
         results.append(f"## {ai_name.upper()} Response:\n\n{response}")
 
     return "\n\n" + ("=" * 80 + "\n\n").join(results)
+
+
+def call_ai_parallel(
+    calls: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Fire multiple Grok calls simultaneously and return all results.
+
+    Each call is a dict with keys matching call_ai() parameters:
+        ai_name, prompt, temperature, system_prompt, tool_name, project
+
+    Returns a list of dicts: [{"label": ..., "result": ...}, ...]
+    in the same order as the input calls.
+    """
+    results: list[dict[str, Any]] = [{"label": c.get("label", f"call_{i}"), "result": ""} for i, c in enumerate(calls)]
+
+    def _do_call(index: int, call_spec: dict[str, Any]) -> tuple[int, str]:
+        response = call_ai(
+            ai_name=call_spec.get("ai_name", "grok"),
+            prompt=call_spec.get("prompt", ""),
+            temperature=call_spec.get("temperature", 0.7),
+            system_prompt=call_spec.get("system_prompt"),
+            tool_name=call_spec.get("tool_name", ""),
+            project=call_spec.get("project", ""),
+        )
+        return index, response
+
+    with ThreadPoolExecutor(max_workers=min(len(calls), 4)) as executor:
+        futures = {executor.submit(_do_call, i, c): i for i, c in enumerate(calls)}
+        for future in as_completed(futures):
+            try:
+                idx, response = future.result()
+                results[idx]["result"] = response
+            except Exception as e:
+                idx = futures[future]
+                results[idx]["result"] = f"Error: {e!s}"
+
+    return results
 
 
 # ─── MCP Protocol Handlers ──────────────────────────────────────────────────
@@ -585,6 +639,61 @@ def handle_tools_list(request_id: Any) -> dict[str, Any]:
                     },
                 },
             },
+            {
+                "name": "grok_multi_review",
+                "description": (
+                    "Run the 2-call Grok review pattern in parallel: "
+                    "Call 1 checks code quality + integration contract compliance, "
+                    "Call 2 checks regulatory compliance + extracts learnings. "
+                    "Returns combined results from both calls."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "code": {"type": "string", "description": "The code to review"},
+                        "contracts_context": {
+                            "type": "string",
+                            "description": "Related API contracts, OpenAPI specs, or interface definitions",
+                            "default": "",
+                        },
+                        "project": {"type": "string", "description": "Project name for memory context", "default": ""},
+                    },
+                    "required": ["code"],
+                },
+            },
+            {
+                "name": "grok_retrieve_context",
+                "description": (
+                    "Retrieve relevant learnings from Grok's memory using semantic search (RAG). "
+                    "Does NOT call Grok — just returns stored knowledge relevant to the task. "
+                    "Use this to get context before starting work, without API cost."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "Description of the task or topic to find context for",
+                        },
+                        "n_results": {
+                            "type": "integer",
+                            "description": "Maximum number of results (default 20)",
+                            "default": 20,
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Optional category filter",
+                            "default": "",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Optional project filter",
+                            "default": "",
+                        },
+                    },
+                    "required": ["task"],
+                },
+            },
         ]
     )
 
@@ -632,6 +741,12 @@ def _dispatch_tool(tool_name: str, arguments: dict[str, Any]) -> str:
 
     if tool_name == "grok_memory_status":
         return _handle_grok_memory_status(arguments)
+
+    if tool_name == "grok_multi_review":
+        return _handle_grok_multi_review(arguments)
+
+    if tool_name == "grok_retrieve_context":
+        return _handle_grok_retrieve_context(arguments)
 
     # ── Multi-AI tools ───────────────────────────────────────────────────
 
@@ -1048,6 +1163,149 @@ def _handle_grok_memory_status(arguments: dict[str, Any]) -> str:
         return result
 
     return f"Error: Unknown detail level '{detail}'. Use summary, full, or category."
+
+
+def _handle_grok_multi_review(arguments: dict[str, Any]) -> str:
+    """Run the 2-call Grok review pattern in parallel.
+
+    Call 1: Code quality + integration contract compliance
+    Call 2: Regulatory compliance + knowledge extraction
+    """
+    code = arguments.get("code", "")
+    contracts_context = arguments.get("contracts_context", "")
+    project = arguments.get("project", "")
+
+    if "grok" not in AI_CLIENTS:
+        return "Error: Grok is not available for multi-review"
+
+    # Build system prompts for both calls
+    sys_prompt_quality = context_builder.build_system_prompt(
+        tool_name="grok_code_review",
+        project=project,
+        task_description=code[:500],
+        extra_instructions=(
+            "You are performing Call 1 of a 2-call review pattern. "
+            "Focus on: (1) Code quality, tests, error handling. "
+            "(2) Integration contract compliance — does this match the provided contracts? "
+            "Check header propagation, event schemas, hardcoded values."
+        ),
+    )
+
+    sys_prompt_compliance = context_builder.build_system_prompt(
+        tool_name="grok_execute_task",
+        project=project,
+        task_description=code[:500],
+        extra_instructions=(
+            "You are performing Call 2 of a 2-call review pattern. "
+            "Focus on: (1) Regulatory / 21 CFR Part 11 compliance. "
+            "(2) Extract 0-3 reusable learnings for future sessions. "
+            'Format learnings as [LEARNING category="..."] content [/LEARNING] blocks.'
+        ),
+    )
+
+    # Build prompts
+    integration_prompt = context_builder.build_integration_review_prompt(code=code, contracts_context=contracts_context)
+    compliance_prompt = (
+        f"## Compliance & Knowledge Review\n\n"
+        f"Review this code for regulatory compliance and extract learnings:\n\n"
+        f"```\n{code}\n```\n"
+    )
+    if contracts_context:
+        compliance_prompt += f"\n### Service Contracts Context\n```\n{contracts_context}\n```\n"
+    compliance_prompt += (
+        "\n### Expected Output\n"
+        "1. **Compliance issues** — Part 11, audit trail, data integrity concerns\n"
+        "2. **Security review** — authentication, authorization, input validation\n"
+        "3. **Extracted learnings** — 0-3 [LEARNING] blocks for the knowledge base\n"
+    )
+
+    # Fire both calls in parallel
+    calls = [
+        {
+            "label": "quality_integration",
+            "ai_name": "grok",
+            "prompt": integration_prompt,
+            "temperature": 0.3,
+            "system_prompt": sys_prompt_quality,
+            "tool_name": "grok_code_review",
+            "project": project,
+        },
+        {
+            "label": "compliance_knowledge",
+            "ai_name": "grok",
+            "prompt": compliance_prompt,
+            "temperature": 0.3,
+            "system_prompt": sys_prompt_compliance,
+            "tool_name": "grok_execute_task",
+            "project": project,
+        },
+    ]
+
+    results = call_ai_parallel(calls)
+
+    # Format combined output
+    output = "GROK MULTI-REVIEW (2 parallel calls)\n\n"
+    for r in results:
+        label = r["label"].replace("_", " ").title()
+        display_text = memory.strip_learning_blocks(r["result"])
+        output += f"{'=' * 60}\n## {label}\n{'=' * 60}\n\n{display_text}\n\n"
+
+    return output
+
+
+def _handle_grok_retrieve_context(arguments: dict[str, Any]) -> str:
+    """Retrieve relevant learnings via RAG without calling Grok."""
+    task = arguments.get("task", "")
+    n_results = arguments.get("n_results", 20)
+    category = arguments.get("category", "") or None
+    project = arguments.get("project", "") or None
+
+    if not task:
+        return "Error: 'task' description is required"
+
+    # Try RAG first
+    import contextlib
+
+    rag_results: list[dict[str, Any]] = []
+    with contextlib.suppress(Exception):
+        rag_results = rag_memory.query_relevant(
+            query_text=task,
+            n_results=n_results,
+            category_filter=category,
+            project_filter=project,
+        )
+
+    if rag_results:
+        output = f"CONTEXT RETRIEVAL (RAG semantic search, {len(rag_results)} results)\n\n"
+        for entry in rag_results:
+            dist_pct = f"{(1 - entry.get('distance', 0)) * 100:.0f}%"
+            output += f"- [{entry['category']}] (relevance: {dist_pct}) {entry['content']}"
+            if entry.get("project"):
+                output += f" (project: {entry['project']})"
+            output += "\n"
+
+        # Also include RAG stats
+        stats = rag_memory.get_stats()
+        output += f"\nRAG stats: {stats.get('count', 0)} total learnings indexed"
+        return output
+
+    # Fallback to JSON-based query
+    learnings = memory.query_learnings(
+        category=category,
+        project=project,
+        limit=n_results,
+    )
+
+    if not learnings:
+        return "CONTEXT RETRIEVAL: No relevant learnings found."
+
+    output = f"CONTEXT RETRIEVAL (JSON fallback, {len(learnings)} results)\n\n"
+    for entry in learnings:
+        output += f"- [{entry['category']}] {entry['content']}"
+        if entry.get("project"):
+            output += f" (project: {entry['project']})"
+        output += "\n"
+    return output
 
 
 # ── Legacy Multi-AI Handlers ────────────────────────────────────────────────

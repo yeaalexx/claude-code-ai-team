@@ -1,21 +1,27 @@
 """
-Dynamic System Prompt Builder — v3.0
+Dynamic System Prompt Builder — v4.0
 
 Assembles Grok's system prompt by injecting:
 1. Identity (always)
 2. Project context (if provided)
-3. Relevant learnings (filtered by tool category)
+3. Relevant learnings (RAG semantic search when available, JSON fallback)
 4. Corrections (recent, relevant)
 5. Learning extraction instructions (always)
 6. Collaboration protocol (for session-based calls)
 
+v4: RAG-based semantic search for learnings via ChromaDB.
+
 Uses a token budget to avoid exceeding context limits.
 """
+
+import logging
 
 try:
     from . import memory
 except ImportError:
     import memory  # type: ignore[no-redef]
+
+logger = logging.getLogger(__name__)
 
 
 # Token budget for system prompt — increased for Grok 4.20's larger context window
@@ -49,6 +55,7 @@ def build_system_prompt(
     session_id: str | None = None,
     include_learnings: bool = True,
     extra_instructions: str = "",
+    task_description: str = "",
 ) -> str:
     """
     Build a complete system prompt for a Grok API call.
@@ -104,7 +111,12 @@ def build_system_prompt(
         remaining_budget = budget - used_tokens - 500  # Reserve 500 for corrections
         if remaining_budget > 200:
             category = TOOL_CATEGORY_MAP.get(tool_name)
-            learnings_text = _get_relevant_learnings(category=category, project=project, token_budget=remaining_budget)
+            learnings_text = _get_relevant_learnings(
+                category=category,
+                project=project,
+                token_budget=remaining_budget,
+                task_description=task_description,
+            )
             if learnings_text:
                 parts.append(learnings_text)
                 used_tokens += estimate_tokens(learnings_text)
@@ -176,13 +188,88 @@ Be direct about disagreements. Do not agree just to be agreeable — push back w
 you see issues. Both you and Claude benefit from honest evaluation."""
 
 
-def _get_relevant_learnings(category: str | None, project: str | None, token_budget: int) -> str:
+def _get_relevant_learnings_rag(
+    task_description: str,
+    category: str | None,
+    project: str | None,
+    token_budget: int,
+) -> str:
+    """Get formatted learnings using RAG semantic search.
+
+    Uses the task description as the search query for semantic relevance.
+    Falls back to empty string if RAG is not available.
+    """
+    try:
+        try:
+            from server import rag_memory
+        except ImportError:
+            import rag_memory  # type: ignore[no-redef]
+
+        if not rag_memory._is_available():
+            return ""
+
+        results = rag_memory.query_relevant(
+            query_text=task_description,
+            n_results=40,
+            category_filter=category,
+            project_filter=project,
+        )
+
+        if not results:
+            return ""
+
+        header = "## Your Accumulated Learnings (semantic match)"
+        if category:
+            header += f" ({category})"
+        lines = [header]
+        tokens_used = estimate_tokens(header)
+
+        for entry in results:
+            line = f"- [{entry['category']}] {entry['content']}"
+            if entry.get("project"):
+                line += f" (project: {entry['project']})"
+            line_tokens = estimate_tokens(line)
+            if tokens_used + line_tokens > token_budget:
+                break
+            lines.append(line)
+            tokens_used += line_tokens
+
+        if len(lines) <= 1:
+            return ""
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.debug("RAG learning retrieval failed, falling back to JSON: %s", e)
+        return ""
+
+
+def _get_relevant_learnings(
+    category: str | None,
+    project: str | None,
+    token_budget: int,
+    task_description: str = "",
+) -> str:
     """Get formatted learnings that fit within the token budget.
+
+    Tries RAG semantic search first (when available and task_description provided),
+    falls back to the original JSON-based category filtering.
 
     When category is None (for collaborate/execute_task/think_deep), fetches a
     broader set of learnings to give Grok maximum context. Integration-category
     learnings get a relevance boost since they're useful in multi-service contexts.
     """
+    # Try RAG first if we have a task description
+    if task_description:
+        rag_result = _get_relevant_learnings_rag(
+            task_description=task_description,
+            category=category,
+            project=project,
+            token_budget=token_budget,
+        )
+        if rag_result:
+            return rag_result
+
+    # Fallback: original JSON-based filtering
     # Broader fetch for uncategorized (general) queries
     limit = 80 if category is None else 50
     learnings = memory.query_learnings(category=category, project=project, limit=limit)

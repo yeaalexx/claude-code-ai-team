@@ -1,24 +1,23 @@
 # Claude Code AI Team
 
-![Version](https://img.shields.io/badge/version-0.3.0-blue)
+![Version](https://img.shields.io/badge/version-4.0.0-blue)
 
 **Bidirectional AI collaboration for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Claude and Grok learn from each other, collaborate on solutions, and build shared knowledge that persists forever.**
 
 Claude Code is powerful on its own. But sometimes you want a second opinion — an independent code review, a gut-check on architecture, a fresh perspective on a stubborn bug. This setup gives Claude Code a teammate that *remembers* and *learns*.
 
-## What's New in v3 (Integration Architecture)
+## What's New in v4 (RAG Memory + Parallel Calls)
 
-v3 solves the **cross-service integration problem**: when AI builds each service beautifully in isolation but fails at integration points (hardcoded values, missing headers, broken contracts).
+v4 adds **semantic memory retrieval** and **parallel Grok calls** — the AI team now finds relevant knowledge by meaning (not just category) and runs multi-call review patterns in half the time.
 
-- **Integration contracts**: Central `INTEGRATION_CONTRACTS.md` + `contracts/` directory define how services talk to each other
-- **Contract-driven development**: Edit the contract first, implement second, verify match
-- **2-call Grok review pattern**: Structured review — Call 1 for quality+integration, Call 2 for compliance+knowledge extraction
-- **Context budget management**: Guidelines for efficient use of Claude's 1M token context window
-- **Learning consolidation**: Prevents unbounded memory growth by pruning low-confidence entries
-- **Doubled Grok token budgets**: Leveraging Grok 4.20's larger context (16K default, 80K sessions)
-- **Auto-bootstrap for multi-service projects**: Detects `services/` or `docker-compose.yml` and creates integration scaffolds
+- **RAG semantic memory**: ChromaDB-powered semantic search over all learnings. Query by natural language to find the most relevant past insights, regardless of category labels.
+- **Parallel Grok calls**: The 2-call review pattern now fires both calls simultaneously via `ThreadPoolExecutor`, cutting review time in half.
+- **`grok_multi_review` tool**: Single tool call replaces the manual 2-call pattern — quality+integration AND compliance+knowledge in parallel.
+- **`grok_retrieve_context` tool**: Get relevant learnings without calling Grok at all — zero API cost context retrieval.
+- **Graceful fallback**: If chromadb is not installed, the server works exactly like v3 (JSON-based filtering). RAG is an enhancement layer, not a requirement.
+- **Automatic migration**: Existing JSON learnings are migrated to ChromaDB on first startup (idempotent, safe to run multiple times).
 
-All v2 features (persistent memory, collaboration sessions, agent execution, memory sync) are preserved.
+All v3 features (integration contracts, 2-call review, context budget, consolidation, Grok 4.20 budgets) and v2 features (persistent memory, collaboration sessions, agent execution, memory sync) are preserved.
 
 ## What This Does
 
@@ -43,7 +42,8 @@ Global (shared across all projects):
   ~/.claude-mcp-servers/multi-ai-collab/.venv/           <-- Isolated Python environment
   ~/.claude-mcp-servers/multi-ai-collab/defaults/        <-- v3 templates (contracts, KB, synergy)
   ~/.claude-mcp-servers/multi-ai-collab/memory/
-      +-- grok-memory.json                               <-- Grok's brain (persistent memory)
+      +-- grok-memory.json                               <-- Grok's brain (persistent memory, JSON)
+      +-- chroma/                                        <-- RAG vector store (ChromaDB, semantic search)
       +-- sessions/                                      <-- Collaboration session transcripts
 
 Per project (auto-created by Claude):
@@ -240,6 +240,12 @@ Once installed, Claude Code gains these MCP tools:
 | `grok_session_end` | End a collaboration session and extract learnings from the full conversation |
 | `grok_memory_status` | View Grok's memory state (learning counts, categories, active sessions) |
 
+### RAG & Parallel Review (v4)
+| Tool | What it does |
+|------|-------------|
+| `grok_multi_review` | Parallel 2-call review: quality+integration AND compliance+knowledge in one tool call |
+| `grok_retrieve_context` | Semantic search over learnings (RAG) — zero API cost, no Grok call needed |
+
 ### Multi-AI Tools (when 2+ AIs enabled)
 `ask_all_ais`, `ai_debate`, `collaborative_solve`, `ai_consensus`
 
@@ -285,6 +291,26 @@ Call 2: grok_execute_task (output_format="review")
 Claude applies feedback, updates contracts/learnings
 ```
 
+## RAG Semantic Memory (v4)
+
+v4 adds a semantic search layer on top of the existing JSON memory. Instead of filtering learnings by category alone, Claude can now search by meaning.
+
+### How it works
+
+1. **Storage**: All learnings are stored in both JSON (`grok-memory.json`) and ChromaDB (`memory/chroma/`)
+2. **Embeddings**: ChromaDB uses its built-in default embedding function (onnxruntime-based, ~200MB, no torch needed)
+3. **Search**: When Grok is called, the task description is used as a semantic query to find the most relevant past learnings
+4. **Fallback**: If ChromaDB is not installed, the server falls back to category-based JSON filtering (same as v3)
+
+### Key tools
+
+- **`grok_retrieve_context`**: Search learnings by meaning without calling Grok. Example: *"Find past learnings about tenant isolation in multi-service architectures"* — returns semantically similar learnings even if they are categorized as "architecture", "security", or "integration".
+- **`grok_multi_review`**: Fires both review calls in parallel, each enriched with RAG-retrieved context relevant to the code being reviewed.
+
+### Migration
+
+Existing learnings in `grok-memory.json` are automatically migrated to ChromaDB on first v4 startup. The migration is idempotent — safe to run multiple times. The first run will be slower as the embedding model (~200MB) is downloaded.
+
 ## MCP Fallback (Billing Protection)
 
 When xAI credits run out, Claude automatically:
@@ -295,13 +321,13 @@ When xAI credits run out, Claude automatically:
 
 No workflow interruption. No error spam. Just seamless degradation.
 
-## Migration from v2
+## Migration from v3
 
-v3 is **fully backward compatible** with v2:
+v4 is **fully backward compatible** with v3:
 - Your existing `grok-memory.json` (all learnings) works unchanged
-- Existing `AI_TEAM_SYNERGY.md` files are preserved
-- New files (`contracts/`, `INTEGRATION_CONTRACTS.md`, `LEARNINGS_KB.md`) are only auto-created in new projects
-- To adopt v3 in an existing project, ask Claude: *"Set up integration contracts for this project"*
+- Learnings are automatically migrated to ChromaDB on first v4 startup
+- If chromadb is not installed, the server falls back to JSON-based filtering (same as v3)
+- All v3 features (integration contracts, 2-call review, consolidation) are preserved
 
 To upgrade:
 ```bash
@@ -310,7 +336,7 @@ git pull
 ./setup.ps1   # or ./setup.sh
 ```
 
-Then restart VS Code.
+First run after upgrade will download the embedding model (~200MB). Then restart VS Code.
 
 ## Uninstall
 
@@ -351,7 +377,8 @@ Edit `~/.claude/CLAUDE.md` to change when and how Claude consults Grok.
 
 | Version | Feature | Status |
 |---------|---------|--------|
-| v0.3.0 | Integration Architecture — contracts, 2-call review, context budget, consolidation | **Current** |
+| v4.0.0 | RAG Memory + Parallel Calls — semantic search, parallel review, zero-cost context retrieval | **Current** |
+| v0.3.0 | Integration Architecture — contracts, 2-call review, context budget, consolidation | Stable |
 | v0.2.0 | Bidirectional Learning — persistent memory, collaboration, agent execution | Stable |
 | v0.1.0 | Initial Setup — auto-bootstrap, fallback protocol, knowledge base | Stable |
 
