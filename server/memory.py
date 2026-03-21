@@ -1,20 +1,25 @@
 """
-Grok's Persistent Memory System — v3.0
+Grok's Persistent Memory System — v4.0
 
 Manages a JSON-based memory store that gives Grok persistent knowledge
 across calls and sessions. The server injects relevant memories into
 Grok's system prompt before each API call.
 
+v4: Also writes to RAG (ChromaDB) when available, for semantic search.
+
 Memory file: memory/grok-memory.json (relative to server install directory)
 """
 
 import json
+import logging
 import os
 import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Memory file location (set by server.py at startup)
 MEMORY_DIR: Path | None = None
@@ -147,7 +152,40 @@ def add_learning(source: str, category: str, content: str, project: str = "", co
     memory["learnings"].append(learning)
     memory["statistics"]["learnings_count"] = len(memory["learnings"])
     save_memory(memory)
+
+    # Also add to RAG if available
+    try:
+        import rag_memory  # type: ignore[import-untyped]
+
+        rag_memory.add_learning(
+            source=source,
+            category=category,
+            content=content.strip(),
+            project=project,
+            confidence=confidence,
+        )
+    except Exception:
+        pass  # RAG is optional — failure is non-fatal
+
     return learning_id
+
+
+def migrate_to_rag() -> int:
+    """Migrate existing JSON learnings to RAG (ChromaDB).
+
+    Returns:
+        Number of learnings migrated, or 0 if RAG is unavailable.
+    """
+    if MEMORY_FILE is None or not MEMORY_FILE.exists():
+        return 0
+
+    try:
+        import rag_memory  # type: ignore[import-untyped]
+
+        return rag_memory.migrate_from_json(MEMORY_FILE)
+    except Exception as e:
+        logger.warning("Failed to migrate to RAG: %s", e)
+        return 0
 
 
 def add_correction(corrector: str, original_claim: str, correction: str, category: str = "general") -> str:
