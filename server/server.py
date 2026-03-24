@@ -35,8 +35,9 @@ sys.path.insert(0, str(SCRIPT_DIR.parent))
 sys.path.insert(0, str(SCRIPT_DIR))
 
 try:
-    from server import context_builder, memory, rag_memory, sessions
+    from server import auto_review, context_builder, memory, rag_memory, sessions
 except ImportError:
+    import auto_review  # type: ignore[no-redef]
     import context_builder  # type: ignore[no-redef]
     import memory  # type: ignore[no-redef]
     import rag_memory  # type: ignore[no-redef]
@@ -802,6 +803,47 @@ def handle_tools_list(request_id: Any) -> dict[str, Any]:
                     "required": ["prompt"],
                 },
             },
+            {
+                "name": "grok_auto_review",
+                "description": (
+                    "Automatically evaluate whether changed files need a Grok review, "
+                    "based on configurable threshold rules (file patterns, count thresholds, "
+                    "sensitive paths). If triggered, runs grok_code_review + grok_execute_task "
+                    "in parallel and returns structured pass/warn/fail findings. "
+                    "Prevents integration gaps from slipping through unreviewed."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "changed_files": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of changed file paths",
+                        },
+                        "diff_summary": {
+                            "type": "string",
+                            "description": "Summary of what changed",
+                            "default": "",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Project name for memory context",
+                            "default": "",
+                        },
+                        "skip_review": {
+                            "type": "boolean",
+                            "description": "Override: skip review regardless of thresholds",
+                            "default": False,
+                        },
+                        "force_review": {
+                            "type": "boolean",
+                            "description": "Override: force full review regardless of thresholds",
+                            "default": False,
+                        },
+                    },
+                    "required": ["changed_files"],
+                },
+            },
         ]
     )
 
@@ -858,6 +900,9 @@ def _dispatch_tool(tool_name: str, arguments: dict[str, Any]) -> str:
 
     if tool_name == "grok_multi_agent":
         return _handle_grok_multi_agent(arguments)
+
+    if tool_name == "grok_auto_review":
+        return _handle_grok_auto_review(arguments)
 
     # ── Multi-AI tools ───────────────────────────────────────────────────
 
@@ -1458,6 +1503,238 @@ def _handle_grok_multi_agent(arguments: dict[str, Any]) -> str:
 
     display_text = memory.strip_learning_blocks(result)
     return f"GROK MULTI-AGENT RESULT:\n\n{display_text}"
+
+
+def _handle_grok_auto_review(arguments: dict[str, Any]) -> str:
+    """Auto-review: evaluate thresholds, trigger Grok review if needed.
+
+    Uses the threshold engine (auto_review module) to decide whether a review
+    is warranted, then internally calls grok_code_review + grok_execute_task
+    via the parallel call pattern (same as grok_multi_review).
+    """
+    changed_files = arguments.get("changed_files", [])
+    diff_summary = arguments.get("diff_summary", "")
+    project = arguments.get("project", "")
+    skip_review = arguments.get("skip_review", False)
+    force_review = arguments.get("force_review", False)
+
+    if not changed_files:
+        return json.dumps({
+            "review_triggered": False,
+            "review_type": "skipped",
+            "threshold_reason": "No changed files provided",
+            "findings": None,
+            "recommendation": "proceed",
+        }, indent=2)
+
+    # Evaluate thresholds
+    evaluation = auto_review.evaluate_thresholds(
+        changed_files=changed_files,
+        diff_summary=diff_summary,
+        skip_review=skip_review,
+        force_review=force_review,
+    )
+
+    # If review not triggered, return early
+    if not evaluation["review_triggered"]:
+        return json.dumps({
+            "review_triggered": False,
+            "review_type": evaluation["review_type"],
+            "threshold_reason": evaluation["threshold_reason"],
+            "findings": None,
+            "recommendation": "proceed",
+        }, indent=2)
+
+    # Review is triggered — check Grok availability
+    if "grok" not in AI_CLIENTS:
+        return json.dumps({
+            "review_triggered": True,
+            "review_type": evaluation["review_type"],
+            "threshold_reason": evaluation["threshold_reason"],
+            "findings": None,
+            "recommendation": "discuss_with_user",
+            "error": "Grok is not available — review was triggered but cannot be executed",
+        }, indent=2)
+
+    # Build the code context from file list and diff summary
+    code_context = f"## Changed Files ({len(changed_files)} files)\n"
+    for f in changed_files:
+        code_context += f"- {f}\n"
+    if diff_summary:
+        code_context += f"\n## Diff Summary\n{diff_summary}\n"
+
+    code_context += f"\n## Threshold Trigger\n{evaluation['threshold_reason']}\n"
+    code_context += f"Matched patterns: {', '.join(evaluation['matched_patterns'])}\n"
+
+    review_type = evaluation["review_type"]
+
+    # Build review calls based on review type
+    calls: list[dict[str, Any]] = []
+
+    if review_type in ("full", "deploy"):
+        # Call 1: Quality + Integration review
+        sys_prompt_1 = context_builder.build_system_prompt(
+            tool_name="grok_code_review",
+            project=project,
+            task_description=diff_summary or f"Review of {len(changed_files)} changed files",
+            extra_instructions=(
+                f"AUTO-REVIEW triggered ({review_type}): {evaluation['threshold_reason']}. "
+                "Focus on: (1) Code quality and correctness. "
+                "(2) Integration contract compliance — API contracts, header propagation, tenant isolation. "
+                "Return your findings with clear severity levels (critical/warning/info). "
+                "Be specific about file paths and line-level issues where possible."
+            ),
+        )
+
+        prompt_1 = (
+            f"## Auto-Review: Quality + Integration Check\n\n"
+            f"{code_context}\n\n"
+            "Analyze these changes for:\n"
+            "1. **Code quality issues** — bugs, error handling gaps, test coverage\n"
+            "2. **Integration risks** — contract violations, missing headers, tenant leaks\n"
+            "3. **Specific recommendations** with severity (critical/warning/info)\n"
+        )
+
+        calls.append({
+            "label": "quality_integration",
+            "ai_name": "grok",
+            "prompt": prompt_1,
+            "temperature": 0.3,
+            "system_prompt": sys_prompt_1,
+            "tool_name": "grok_code_review",
+            "project": project,
+        })
+
+        # Call 2: Compliance + deploy parity review
+        focus_2 = "deploy parity and environment consistency" if review_type == "deploy" else "compliance and security"
+        sys_prompt_2 = context_builder.build_system_prompt(
+            tool_name="grok_execute_task",
+            project=project,
+            task_description=diff_summary or f"Compliance review of {len(changed_files)} changed files",
+            extra_instructions=(
+                f"AUTO-REVIEW triggered ({review_type}): {evaluation['threshold_reason']}. "
+                f"Focus on: {focus_2}. "
+                "Check for: regulatory compliance, audit trail gaps, security concerns, "
+                "and environment-specific configuration drift. "
+                "Return findings with severity levels."
+            ),
+        )
+
+        prompt_2 = (
+            f"## Auto-Review: Compliance + {'Deploy Parity' if review_type == 'deploy' else 'Security'} Check\n\n"
+            f"{code_context}\n\n"
+            "Analyze these changes for:\n"
+            "1. **Compliance issues** — audit trail, data integrity, regulatory concerns\n"
+            "2. **Security review** — authentication, authorization, input validation\n"
+        )
+        if review_type == "deploy":
+            prompt_2 += "3. **Deploy parity** — environment consistency, config drift, infrastructure changes\n"
+        else:
+            prompt_2 += "3. **Cross-cutting concerns** — logging, monitoring, error propagation\n"
+
+        calls.append({
+            "label": "compliance_review",
+            "ai_name": "grok",
+            "prompt": prompt_2,
+            "temperature": 0.3,
+            "system_prompt": sys_prompt_2,
+            "tool_name": "grok_execute_task",
+            "project": project,
+        })
+
+    elif review_type == "integration":
+        # Single call: focused integration review
+        sys_prompt = context_builder.build_system_prompt(
+            tool_name="grok_code_review",
+            project=project,
+            task_description=diff_summary or f"Integration review of {len(changed_files)} changed files",
+            extra_instructions=(
+                f"AUTO-REVIEW triggered (integration): {evaluation['threshold_reason']}. "
+                "Focus specifically on API contracts, route definitions, middleware chains, "
+                "and service boundary correctness."
+            ),
+        )
+
+        prompt = (
+            f"## Auto-Review: Integration Check\n\n"
+            f"{code_context}\n\n"
+            "Analyze these changes for:\n"
+            "1. **Route/controller correctness** — URL patterns, HTTP methods, middleware ordering\n"
+            "2. **API contract compliance** — request/response shapes, status codes\n"
+            "3. **Middleware chain** — correct ordering, context propagation\n"
+            "4. **Specific recommendations** with severity (critical/warning/info)\n"
+        )
+
+        calls.append({
+            "label": "integration_review",
+            "ai_name": "grok",
+            "prompt": prompt,
+            "temperature": 0.3,
+            "system_prompt": sys_prompt,
+            "tool_name": "grok_code_review",
+            "project": project,
+        })
+
+    # Execute the review call(s)
+    results = call_ai_parallel(calls)
+
+    # Parse findings from results
+    quality_text = ""
+    compliance_text = ""
+    for r in results:
+        clean = memory.strip_learning_blocks(r["result"])
+        if r["label"] in ("quality_integration", "integration_review"):
+            quality_text = clean
+        elif r["label"] == "compliance_review":
+            compliance_text = clean
+
+    findings = auto_review.parse_review_findings(quality_text, compliance_text)
+
+    # Extract learnings from results
+    for r in results:
+        learnings = memory.extract_learnings(r["result"])
+        for entry in learnings:
+            findings["learnings"].append(entry["content"])
+
+    recommendation = auto_review.determine_recommendation(findings)
+
+    # Build structured response
+    response = {
+        "review_triggered": True,
+        "review_type": review_type,
+        "threshold_reason": evaluation["threshold_reason"],
+        "findings": findings,
+        "recommendation": recommendation,
+    }
+
+    # Also build a human-readable summary
+    summary = f"GROK AUTO-REVIEW ({review_type.upper()})\n"
+    summary += f"Trigger: {evaluation['threshold_reason']}\n"
+    summary += f"Files: {len(changed_files)} | Patterns: {', '.join(evaluation['matched_patterns'])}\n\n"
+
+    for section in ("quality", "integration", "compliance"):
+        s = findings[section]
+        status_icon = {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}.get(s["status"], "?")
+        summary += f"  {section.title()}: [{status_icon}]"
+        if s["issues"]:
+            summary += f" ({len(s['issues'])} issues)"
+        summary += "\n"
+
+    summary += f"\nRecommendation: {recommendation.upper()}\n"
+
+    if findings.get("learnings"):
+        summary += f"\nLearnings extracted: {len(findings['learnings'])}\n"
+
+    summary += f"\n--- Structured Response ---\n{json.dumps(response, indent=2)}"
+
+    # Append raw Grok output for full context
+    summary += "\n\n--- Raw Review Output ---\n"
+    for r in results:
+        label = r["label"].replace("_", " ").title()
+        clean = memory.strip_learning_blocks(r["result"])
+        summary += f"\n{'=' * 50}\n## {label}\n{'=' * 50}\n{clean}\n"
+
+    return summary
 
 
 # ── Legacy Multi-AI Handlers ────────────────────────────────────────────────
