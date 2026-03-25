@@ -8,7 +8,7 @@ reasoning (referencing specific criteria), affected features, severity assessmen
 
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 try:
@@ -18,13 +18,13 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Type alias for the AI caller callback (same as workflows.py)
-AiCaller = Callable[[str, str], Awaitable[str]]
+# Type alias for the AI caller callback — sync (prompt, context) -> str
+AiCaller = Callable[[str, str], str]
 
 
-async def analyze_finding(
+def analyze_finding(
     finding: dict[str, Any],
-    feature_map: FeatureMap,
+    feature_map: FeatureMap | None,
     ai_caller: AiCaller,
     contracts_context: str = "",
 ) -> dict[str, Any]:
@@ -49,7 +49,7 @@ async def analyze_finding(
     affected_features: list[dict[str, Any]] = []
     blast_radius = "unknown"
 
-    if feature_map.is_loaded() and file_path:
+    if feature_map and feature_map.is_loaded() and file_path:
         features = feature_map.get_affected_features(file_path)
         affected_features = [
             {
@@ -78,7 +78,7 @@ async def analyze_finding(
     )
 
     try:
-        response = await ai_caller(system_prompt, user_message)
+        response = ai_caller(system_prompt, user_message)
         analysis = _parse_analysis_response(response)
     except Exception as e:
         logger.warning("AI analysis failed for finding %s: %s", finding.get("id"), e)
@@ -96,9 +96,9 @@ async def analyze_finding(
     return enriched
 
 
-async def batch_analyze(
+def batch_analyze(
     findings: list[dict[str, Any]],
-    feature_map: FeatureMap,
+    feature_map: FeatureMap | None,
     ai_caller: AiCaller,
     contracts_context: str = "",
 ) -> list[dict[str, Any]]:
@@ -109,8 +109,8 @@ async def batch_analyze(
 
     Args:
         findings: List of raw finding dicts.
-        feature_map: Loaded feature map.
-        ai_caller: Async AI callback.
+        feature_map: Loaded feature map (or None).
+        ai_caller: AI callback.
         contracts_context: Optional contract text.
 
     Returns:
@@ -130,14 +130,14 @@ async def batch_analyze(
     for service, service_findings in by_service.items():
         # Build service-specific contracts context
         service_context = contracts_context
-        if feature_map.is_loaded():
+        if feature_map and feature_map.is_loaded():
             service_features = feature_map.get_features_for_service(service)
             if service_features:
                 feature_names = [f.name for f in service_features]
                 service_context += f"\n\nFeatures in service '{service}': {', '.join(feature_names)}"
 
         for finding in service_findings:
-            enriched = await analyze_finding(
+            enriched = analyze_finding(
                 finding=finding,
                 feature_map=feature_map,
                 ai_caller=ai_caller,

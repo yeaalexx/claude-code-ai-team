@@ -65,7 +65,7 @@ class FeatureMap:
             ValueError: If the YAML structure is invalid.
         """
         try:
-            import yaml
+            import yaml  # type: ignore[import-untyped]
         except ImportError:
             logger.error("PyYAML not installed. Install with: pip install 'pyyaml>=6.0'")
             raise ImportError("pyyaml is required for feature map parsing") from None

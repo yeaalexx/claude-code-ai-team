@@ -171,10 +171,7 @@ try:
 except Exception as _e:
     print(f"Finding lifecycle init skipped: {_e}", file=sys.stderr)
 
-try:
-    decision_learner.initialize(MEMORY_BASE)
-except Exception as _e:
-    print(f"Decision learner init skipped: {_e}", file=sys.stderr)
+# decision_learner uses module-level state — no explicit init needed
 
 
 # ─── Core AI Call Function (Enhanced) ────────────────────────────────────────
@@ -2180,9 +2177,10 @@ def _handle_agent_load_feature_map(arguments: dict[str, Any]) -> str:
         return f"Error: {yaml_path} not found"
     try:
         fm = feature_map.load_map(path)
-        features = fm.list_features()
+        all_features = fm.get_all_features()
+        feature_names = [f.name for f in all_features]
         _auditor.set_feature_map(fm)
-        return f"Feature map loaded: {len(features)} features — {', '.join(features)}"
+        return f"Feature map loaded: {len(feature_names)} features — {', '.join(feature_names)}"
     except Exception as e:
         return f"Error loading feature map: {e}"
 
@@ -2198,7 +2196,7 @@ def _handle_agent_analyze_findings(arguments: dict[str, Any]) -> str:
 
     fm = feature_map.get_map()
 
-    def ai_caller(prompt: str) -> str:
+    def ai_caller(prompt: str, _context: str = "") -> str:
         sys_prompt = context_builder.build_system_prompt(tool_name="grok_code_review", project="")
         return call_ai("grok", prompt, 0.3, system_prompt=sys_prompt, tool_name="agent_analyze_findings")
 
