@@ -137,9 +137,7 @@ def run_tests():
         "- Critical: tenant header not propagated to downstream service\n"
     )
     compliance = (
-        "## Compliance\n"
-        "- Warning: audit trail missing for delete operations\n"
-        "- Consider adding timestamp validation\n"
+        "## Compliance\n- Warning: audit trail missing for delete operations\n- Consider adding timestamp validation\n"
     )
     findings = auto_review.parse_review_findings(quality, compliance)
     test("quality has issues", len(findings["quality"]["issues"]) > 0)
@@ -150,35 +148,47 @@ def run_tests():
     print("\n[13] Determine Recommendation")
     test(
         "all pass -> proceed",
-        auto_review.determine_recommendation({
-            "quality": {"status": "pass"},
-            "integration": {"status": "pass"},
-            "compliance": {"status": "pass"},
-        }) == "proceed",
+        auto_review.determine_recommendation(
+            {
+                "quality": {"status": "pass"},
+                "integration": {"status": "pass"},
+                "compliance": {"status": "pass"},
+            }
+        )
+        == "proceed",
     )
     test(
         "one fail -> fix_before_commit",
-        auto_review.determine_recommendation({
-            "quality": {"status": "fail"},
-            "integration": {"status": "pass"},
-            "compliance": {"status": "pass"},
-        }) == "fix_before_commit",
+        auto_review.determine_recommendation(
+            {
+                "quality": {"status": "fail"},
+                "integration": {"status": "pass"},
+                "compliance": {"status": "pass"},
+            }
+        )
+        == "fix_before_commit",
     )
     test(
         "two warns -> discuss_with_user",
-        auto_review.determine_recommendation({
-            "quality": {"status": "warn"},
-            "integration": {"status": "warn"},
-            "compliance": {"status": "pass"},
-        }) == "discuss_with_user",
+        auto_review.determine_recommendation(
+            {
+                "quality": {"status": "warn"},
+                "integration": {"status": "warn"},
+                "compliance": {"status": "pass"},
+            }
+        )
+        == "discuss_with_user",
     )
     test(
         "one warn -> proceed",
-        auto_review.determine_recommendation({
-            "quality": {"status": "warn"},
-            "integration": {"status": "pass"},
-            "compliance": {"status": "pass"},
-        }) == "proceed",
+        auto_review.determine_recommendation(
+            {
+                "quality": {"status": "warn"},
+                "integration": {"status": "pass"},
+                "compliance": {"status": "pass"},
+            }
+        )
+        == "proceed",
     )
 
     # --- Test 14: load_rules defaults ---
@@ -192,10 +202,14 @@ def run_tests():
     print("\n[15] Project-Specific Overrides")
     test_dir = Path(tempfile.mkdtemp(prefix="auto_review_test_"))
     override_file = test_dir / "ai-team-thresholds.json"
-    override_file.write_text(json.dumps({
-        "thresholds": {"skip_below_file_count": 2},
-        "sensitive_patterns": ["auth", "custom-pattern"],
-    }))
+    override_file.write_text(
+        json.dumps(
+            {
+                "thresholds": {"skip_below_file_count": 2},
+                "sensitive_patterns": ["auth", "custom-pattern"],
+            }
+        )
+    )
     rules = auto_review.load_rules(str(test_dir))
     test("override applied: skip_below is 2", rules["thresholds"]["skip_below_file_count"] == 2)
     test("override applied: custom pattern", "custom-pattern" in rules["sensitive_patterns"])

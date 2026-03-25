@@ -226,12 +226,28 @@ def parse_review_findings(quality_result: str, compliance_result: str = "") -> d
 
     # Keywords that indicate issues at different severity levels
     fail_keywords = [
-        "critical", "vulnerability", "security hole", "data leak", "injection",
-        "broken", "crash", "fatal", "must fix", "blocking",
+        "critical",
+        "vulnerability",
+        "security hole",
+        "data leak",
+        "injection",
+        "broken",
+        "crash",
+        "fatal",
+        "must fix",
+        "blocking",
     ]
     warn_keywords = [
-        "warning", "concern", "should", "consider", "potential issue",
-        "risk", "missing", "incomplete", "inconsistent", "deprecated",
+        "warning",
+        "concern",
+        "should",
+        "consider",
+        "potential issue",
+        "risk",
+        "missing",
+        "incomplete",
+        "inconsistent",
+        "deprecated",
     ]
 
     def _assess_section(text: str, section_name: str) -> dict[str, Any]:
@@ -248,7 +264,9 @@ def parse_review_findings(quality_result: str, compliance_result: str = "") -> d
         # Extract bullet points or numbered items as issues
         for line in text.split("\n"):
             stripped = line.strip()
-            if stripped.startswith(("-", "*", "•")) or (len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in ".)"):
+            if stripped.startswith(("-", "*", "•")) or (
+                len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in ".)"
+            ):
                 # Remove the bullet/number prefix
                 issue = stripped.lstrip("-*•0123456789.) ").strip()
                 if issue and len(issue) > 10:
@@ -279,7 +297,7 @@ def parse_review_findings(quality_result: str, compliance_result: str = "") -> d
             idx = lower_result.find(marker)
             if idx > 0:
                 # Found integration section, split there
-                integration_text = quality_result[max(0, idx - 50):]
+                integration_text = quality_result[max(0, idx - 50) :]
                 quality_text = quality_result[:idx]
                 break
 
