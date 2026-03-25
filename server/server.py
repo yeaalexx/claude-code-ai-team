@@ -144,6 +144,7 @@ _workflow_manager = workflows.WorkflowManager()
 _auditor = auditor.ProactiveAuditor()
 
 # Start control plane (FastAPI on localhost:3100) — non-blocking
+_control_plane: Any = None
 try:
     _control_plane = control_plane.get_control_plane()
     _control_plane.set_workflow_manager(_workflow_manager)
@@ -151,7 +152,6 @@ try:
     # Don't auto-start — user starts via tool or config
 except Exception as _e:
     print(f"Control plane init skipped: {_e}", file=sys.stderr)
-    _control_plane = None
 
 
 # ─── Core AI Call Function (Enhanced) ────────────────────────────────────────

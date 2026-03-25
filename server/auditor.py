@@ -112,7 +112,7 @@ _HEADER_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 # Common hardcoded values that should come from config/contracts
-_HARDCODED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+_HARDCODED_PATTERNS: list[tuple[re.Pattern[str], str | None]] = [
     (re.compile(r'["\'](localhost|127\.0\.0\.1):\d{4,5}["\']'), "Hardcoded host:port — should use config/env var"),
     (re.compile(r'["\']application/json["\']'), None),  # This is OK — ignore
     (re.compile(r"schema_[a-f0-9]{8}"), "Hardcoded tenant schema name — should be dynamic"),

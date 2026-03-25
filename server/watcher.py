@@ -309,15 +309,15 @@ class FileWatcher:
         class _WatchdogBridge(FileSystemEventHandler):
             def on_modified(self, event: FileSystemEvent) -> None:
                 if not event.is_directory:
-                    handler.on_event(event.src_path, "modified")
+                    handler.on_event(str(event.src_path), "modified")
 
             def on_created(self, event: FileSystemEvent) -> None:
                 if not event.is_directory:
-                    handler.on_event(event.src_path, "created")
+                    handler.on_event(str(event.src_path), "created")
 
             def on_deleted(self, event: FileSystemEvent) -> None:
                 if not event.is_directory:
-                    handler.on_event(event.src_path, "deleted")
+                    handler.on_event(str(event.src_path), "deleted")
 
         bridge = _WatchdogBridge()
         observer = Observer()
