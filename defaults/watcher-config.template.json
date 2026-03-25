@@ -1,0 +1,25 @@
+{
+  "enabled": false,
+  "project_root": ".",
+  "watch_paths": ["services/", "frontend/src/"],
+  "ignore_patterns": [
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/dist/**",
+    "**/.git/**",
+    "**/build/**",
+    "**/target/**",
+    "**/*.pyc",
+    "**/.venv/**",
+    "**/coverage/**"
+  ],
+  "contracts_path": "contracts/",
+  "integration_contracts": "INTEGRATION_CONTRACTS.md",
+  "debounce_seconds": 2.0,
+  "on_change": "validate",
+  "proactive_audit": {
+    "enabled": false,
+    "interval_hours": 4,
+    "scan_on_startup": false
+  }
+}

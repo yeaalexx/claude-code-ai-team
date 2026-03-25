@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Enhanced Multi-AI MCP Server v4.0
-RAG Memory + Parallel Calls — Claude + Grok collaboration with:
+Enhanced Multi-AI MCP Server v5.0
+Always-On Agent System — Claude + Grok collaboration with:
 - RAG-based semantic memory retrieval (ChromaDB)
 - Parallel Grok calls for the 2-call review pattern
 - Persistent memory for Grok (with consolidation to prevent unbounded growth)
@@ -11,6 +11,10 @@ RAG Memory + Parallel Calls — Claude + Grok collaboration with:
 - Integration-first protocol for multi-service projects
 - Contract-driven development workflow
 - Increased token budgets for Grok 4.20 multi-agent
+- v5: File system watcher for automatic change detection
+- v5: Proactive contract auditor (pattern-based, no AI cost)
+- v5: Validation workflows (LangGraph-inspired state machine)
+- v5: Agent control plane with FastAPI dashboard (localhost:3100)
 """
 
 import json
@@ -43,7 +47,15 @@ except ImportError:
     import rag_memory  # type: ignore[no-redef]
     import sessions  # type: ignore[no-redef]
 
-__version__ = "4.1.0"
+try:
+    from server import auditor, control_plane, watcher, workflows
+except ImportError:
+    import auditor  # type: ignore[no-redef]
+    import control_plane  # type: ignore[no-redef]
+    import watcher  # type: ignore[no-redef]
+    import workflows  # type: ignore[no-redef]
+
+__version__ = "5.0.0"
 
 # Load credentials
 CREDENTIALS_FILE = SCRIPT_DIR / "credentials.json"
@@ -126,6 +138,20 @@ try:
         print(f"RAG: Migrated {_migrated} learnings from JSON to ChromaDB", file=sys.stderr)
 except Exception as _e:
     print(f"RAG migration skipped: {_e}", file=sys.stderr)
+
+# Initialize v5: Always-on agent system (non-blocking, graceful fallback)
+_workflow_manager = workflows.WorkflowManager()
+_auditor = auditor.ProactiveAuditor()
+
+# Start control plane (FastAPI on localhost:3100) — non-blocking
+try:
+    _control_plane = control_plane.get_control_plane()
+    _control_plane.set_workflow_manager(_workflow_manager)
+    _control_plane.set_auditor(_auditor)
+    # Don't auto-start — user starts via tool or config
+except Exception as _e:
+    print(f"Control plane init skipped: {_e}", file=sys.stderr)
+    _control_plane = None
 
 
 # ─── Core AI Call Function (Enhanced) ────────────────────────────────────────
@@ -844,6 +870,82 @@ def handle_tools_list(request_id: Any) -> dict[str, Any]:
                     "required": ["changed_files"],
                 },
             },
+            # ── v5: Always-on agent tools ──
+            {
+                "name": "agent_watcher_start",
+                "description": "Start the file system watcher to monitor project directories for changes. Validates changes against integration contracts automatically.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "config_path": {
+                            "type": "string",
+                            "description": "Path to watcher-config.json in the project root",
+                            "default": "",
+                        },
+                        "project_root": {"type": "string", "description": "Project root directory to watch"},
+                    },
+                    "required": ["project_root"],
+                },
+            },
+            {
+                "name": "agent_watcher_stop",
+                "description": "Stop the file system watcher.",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "agent_watcher_status",
+                "description": "Get the current status of the file watcher and recent events.",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "agent_audit_scan",
+                "description": "Run the proactive contract auditor to scan for latent integration violations. Scans service code against contracts/ without AI calls (fast, free).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_root": {"type": "string", "description": "Project root directory"},
+                        "service": {
+                            "type": "string",
+                            "description": "Specific service to scan (optional — scans all if omitted)",
+                            "default": "",
+                        },
+                    },
+                    "required": ["project_root"],
+                },
+            },
+            {
+                "name": "agent_audit_findings",
+                "description": "Get proactive auditor findings (pending contract violations and recommendations).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "description": "Filter by status: pending, approved, dismissed, all",
+                            "default": "pending",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "agent_control_plane",
+                "description": "Start or manage the Agent Monitor control plane (FastAPI dashboard on localhost:3100).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": "start, stop, or status",
+                            "default": "status",
+                        },
+                        "port": {
+                            "type": "number",
+                            "description": "Port for the dashboard (default 3100)",
+                            "default": 3100,
+                        },
+                    },
+                },
+            },
         ]
     )
 
@@ -903,6 +1005,20 @@ def _dispatch_tool(tool_name: str, arguments: dict[str, Any]) -> str:
 
     if tool_name == "grok_auto_review":
         return _handle_grok_auto_review(arguments)
+
+    # ── v5: Always-on agent tools ──
+    if tool_name == "agent_watcher_start":
+        return _handle_agent_watcher_start(arguments)
+    if tool_name == "agent_watcher_stop":
+        return _handle_agent_watcher_stop(arguments)
+    if tool_name == "agent_watcher_status":
+        return _handle_agent_watcher_status(arguments)
+    if tool_name == "agent_audit_scan":
+        return _handle_agent_audit_scan(arguments)
+    if tool_name == "agent_audit_findings":
+        return _handle_agent_audit_findings(arguments)
+    if tool_name == "agent_control_plane":
+        return _handle_agent_control_plane(arguments)
 
     # ── Multi-AI tools ───────────────────────────────────────────────────
 
@@ -1519,13 +1635,16 @@ def _handle_grok_auto_review(arguments: dict[str, Any]) -> str:
     force_review = arguments.get("force_review", False)
 
     if not changed_files:
-        return json.dumps({
-            "review_triggered": False,
-            "review_type": "skipped",
-            "threshold_reason": "No changed files provided",
-            "findings": None,
-            "recommendation": "proceed",
-        }, indent=2)
+        return json.dumps(
+            {
+                "review_triggered": False,
+                "review_type": "skipped",
+                "threshold_reason": "No changed files provided",
+                "findings": None,
+                "recommendation": "proceed",
+            },
+            indent=2,
+        )
 
     # Evaluate thresholds
     evaluation = auto_review.evaluate_thresholds(
@@ -1537,24 +1656,30 @@ def _handle_grok_auto_review(arguments: dict[str, Any]) -> str:
 
     # If review not triggered, return early
     if not evaluation["review_triggered"]:
-        return json.dumps({
-            "review_triggered": False,
-            "review_type": evaluation["review_type"],
-            "threshold_reason": evaluation["threshold_reason"],
-            "findings": None,
-            "recommendation": "proceed",
-        }, indent=2)
+        return json.dumps(
+            {
+                "review_triggered": False,
+                "review_type": evaluation["review_type"],
+                "threshold_reason": evaluation["threshold_reason"],
+                "findings": None,
+                "recommendation": "proceed",
+            },
+            indent=2,
+        )
 
     # Review is triggered — check Grok availability
     if "grok" not in AI_CLIENTS:
-        return json.dumps({
-            "review_triggered": True,
-            "review_type": evaluation["review_type"],
-            "threshold_reason": evaluation["threshold_reason"],
-            "findings": None,
-            "recommendation": "discuss_with_user",
-            "error": "Grok is not available — review was triggered but cannot be executed",
-        }, indent=2)
+        return json.dumps(
+            {
+                "review_triggered": True,
+                "review_type": evaluation["review_type"],
+                "threshold_reason": evaluation["threshold_reason"],
+                "findings": None,
+                "recommendation": "discuss_with_user",
+                "error": "Grok is not available — review was triggered but cannot be executed",
+            },
+            indent=2,
+        )
 
     # Build the code context from file list and diff summary
     code_context = f"## Changed Files ({len(changed_files)} files)\n"
@@ -1595,15 +1720,17 @@ def _handle_grok_auto_review(arguments: dict[str, Any]) -> str:
             "3. **Specific recommendations** with severity (critical/warning/info)\n"
         )
 
-        calls.append({
-            "label": "quality_integration",
-            "ai_name": "grok",
-            "prompt": prompt_1,
-            "temperature": 0.3,
-            "system_prompt": sys_prompt_1,
-            "tool_name": "grok_code_review",
-            "project": project,
-        })
+        calls.append(
+            {
+                "label": "quality_integration",
+                "ai_name": "grok",
+                "prompt": prompt_1,
+                "temperature": 0.3,
+                "system_prompt": sys_prompt_1,
+                "tool_name": "grok_code_review",
+                "project": project,
+            }
+        )
 
         # Call 2: Compliance + deploy parity review
         focus_2 = "deploy parity and environment consistency" if review_type == "deploy" else "compliance and security"
@@ -1632,15 +1759,17 @@ def _handle_grok_auto_review(arguments: dict[str, Any]) -> str:
         else:
             prompt_2 += "3. **Cross-cutting concerns** — logging, monitoring, error propagation\n"
 
-        calls.append({
-            "label": "compliance_review",
-            "ai_name": "grok",
-            "prompt": prompt_2,
-            "temperature": 0.3,
-            "system_prompt": sys_prompt_2,
-            "tool_name": "grok_execute_task",
-            "project": project,
-        })
+        calls.append(
+            {
+                "label": "compliance_review",
+                "ai_name": "grok",
+                "prompt": prompt_2,
+                "temperature": 0.3,
+                "system_prompt": sys_prompt_2,
+                "tool_name": "grok_execute_task",
+                "project": project,
+            }
+        )
 
     elif review_type == "integration":
         # Single call: focused integration review
@@ -1665,15 +1794,17 @@ def _handle_grok_auto_review(arguments: dict[str, Any]) -> str:
             "4. **Specific recommendations** with severity (critical/warning/info)\n"
         )
 
-        calls.append({
-            "label": "integration_review",
-            "ai_name": "grok",
-            "prompt": prompt,
-            "temperature": 0.3,
-            "system_prompt": sys_prompt,
-            "tool_name": "grok_code_review",
-            "project": project,
-        })
+        calls.append(
+            {
+                "label": "integration_review",
+                "ai_name": "grok",
+                "prompt": prompt,
+                "temperature": 0.3,
+                "system_prompt": sys_prompt,
+                "tool_name": "grok_code_review",
+                "project": project,
+            }
+        )
 
     # Execute the review call(s)
     results = call_ai_parallel(calls)
@@ -1782,6 +1913,159 @@ def _handle_ai_consensus(arguments: dict[str, Any]) -> str:
         response = call_ai(ai_name, prompt, 0.4)
         responses.append(f"## {ai_name.upper()} Recommendation:\n{response}")
     return "AI CONSENSUS ANALYSIS\n\n" + "\n\n".join(responses)
+
+
+# ─── v5: Always-on Agent Handlers ──────────────────────────────────────────
+
+
+def _handle_agent_watcher_start(arguments: dict[str, Any]) -> str:
+    project_root = arguments.get("project_root", "")
+    config_path = arguments.get("config_path", "")
+
+    if not project_root:
+        return "Error: project_root is required"
+
+    root = Path(project_root)
+    if not root.exists():
+        return f"Error: project root does not exist: {project_root}"
+
+    # Look for watcher config
+    cfg_path = Path(config_path) if config_path else root / "watcher-config.json"
+
+    if not cfg_path.exists():
+        # Create a minimal config dict and write it so from_file can load it
+        default_config = {
+            "enabled": True,
+            "project_root": str(root),
+            "watch_paths": [
+                str(root / "services"),
+                str(root / "frontend" / "src"),
+                str(root / "contracts"),
+            ],
+            "contracts_path": str(root / "contracts"),
+            "integration_contracts": str(root / "INTEGRATION_CONTRACTS.md"),
+        }
+        cfg_path = root / "watcher-config.json"
+        cfg_path.write_text(json.dumps(default_config, indent=2), encoding="utf-8")
+
+    def on_change(event: Any) -> None:
+        # Record the event — workflow submission requires async context
+        logger.info("Watcher event: %s %s", event.event_type, event.path)
+
+    file_watcher = watcher.get_watcher()
+    ok = file_watcher.start(cfg_path, on_change)
+
+    if _control_plane:
+        _control_plane.set_watcher(file_watcher)
+
+    if ok:
+        config = file_watcher.get_config()
+        watch_paths = config.get("watch_paths", []) if config else []
+        return f"File watcher started. Monitoring: {watch_paths}"
+    return "File watcher could not be started (check config or logs)."
+
+
+def _handle_agent_watcher_stop(arguments: dict[str, Any]) -> str:
+    file_watcher = watcher.get_watcher()
+    if file_watcher.is_running():
+        file_watcher.stop()
+        return "File watcher stopped."
+    return "File watcher was not running."
+
+
+def _handle_agent_watcher_status(arguments: dict[str, Any]) -> str:
+    file_watcher = watcher.get_watcher()
+    running = file_watcher.is_running()
+    events = file_watcher.get_recent_events(limit=10)
+
+    lines = [f"Watcher: {'RUNNING' if running else 'STOPPED'}"]
+    if events:
+        lines.append(f"Recent events ({len(events)}):")
+        for e in events:
+            lines.append(f"  [{e['event_type']}] {e['path']} (service: {e.get('service', 'unknown')})")
+    else:
+        lines.append("No recent events.")
+
+    # Workflow status
+    completed = _workflow_manager.get_completed(limit=5)
+    lines.append(f"\nWorkflows: {len(completed)} recently completed")
+
+    return "\n".join(lines)
+
+
+def _handle_agent_audit_scan(arguments: dict[str, Any]) -> str:
+    project_root = arguments.get("project_root", "")
+    service = arguments.get("service", "")
+
+    if not project_root:
+        return "Error: project_root is required"
+
+    root = Path(project_root)
+    contracts_path = root / "contracts"
+
+    if not contracts_path.exists():
+        return f"Error: contracts/ directory not found at {contracts_path}"
+
+    if service:
+        service_path = root / "services" / service
+        if not service_path.exists():
+            return f"Error: service directory not found: {service_path}"
+        findings = _auditor.scan_service(service, service_path)
+        return f"Scanned {service}: {len(findings)} findings\n" + "\n".join(
+            f"  [{f.severity}] {f.description}" for f in findings
+        )
+    else:
+        findings = _auditor.scan_all(str(root), str(contracts_path))
+        return f"Scanned all services: {len(findings)} findings\n" + "\n".join(
+            f"  [{f.severity}] [{f.service}] {f.description}" for f in findings
+        )
+
+
+def _handle_agent_audit_findings(arguments: dict[str, Any]) -> str:
+    status = arguments.get("status", "pending")
+
+    if status == "pending":
+        findings = _auditor.get_pending_recommendations()
+    elif status == "all":
+        findings = _auditor.get_findings()
+    else:
+        findings = _auditor.get_findings(status=status)
+
+    if not findings:
+        return f"No {status} findings."
+
+    lines = [f"{len(findings)} {status} findings:"]
+    for f in findings:
+        lines.append(f"  [{f['id']}] [{f['severity']}] [{f.get('service', '?')}] {f['description']}")
+        if f.get("contract_reference"):
+            lines.append(f"    Contract: {f['contract_reference']}")
+    return "\n".join(lines)
+
+
+def _handle_agent_control_plane(arguments: dict[str, Any]) -> str:
+    action = arguments.get("action", "status")
+    port = int(arguments.get("port", 3100))
+
+    global _control_plane
+
+    if action == "start":
+        if _control_plane is None:
+            _control_plane = control_plane.get_control_plane()
+            _control_plane.set_workflow_manager(_workflow_manager)
+            _control_plane.set_auditor(_auditor)
+        _control_plane.start(port=port)
+        return f"Agent Monitor dashboard started at http://localhost:{port}/dashboard"
+
+    elif action == "stop":
+        if _control_plane:
+            _control_plane.stop()
+            return "Agent Monitor dashboard stopped."
+        return "Control plane was not running."
+
+    else:  # status
+        if _control_plane and _control_plane._server_thread is not None and _control_plane._server_thread.is_alive():
+            return "Agent Monitor: RUNNING at http://localhost:3100/dashboard"
+        return "Agent Monitor: NOT RUNNING. Use action='start' to launch."
 
 
 # ─── Main Server Loop ───────────────────────────────────────────────────────
