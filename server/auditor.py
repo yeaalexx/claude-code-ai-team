@@ -14,6 +14,8 @@ Patterns detected:
 - Hardcoded values that should come from shared contracts
 """
 
+from __future__ import annotations
+
 import logging
 import re
 import uuid
@@ -21,7 +23,10 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .feature_map import FeatureMap
 
 logger = logging.getLogger(__name__)
 
@@ -464,6 +469,15 @@ class ProactiveAuditor:
         self._findings_by_id: dict[str, Finding] = {}
         self._last_scan_at: str | None = None
         self._scan_count: int = 0
+        self._feature_map: FeatureMap | None = None
+
+    def set_feature_map(self, feature_map: FeatureMap) -> None:
+        """Inject a loaded feature map for cross-feature scanning.
+
+        Args:
+            feature_map: A FeatureMap instance (must already be loaded).
+        """
+        self._feature_map = feature_map
 
     def scan_service(
         self,
@@ -663,6 +677,251 @@ class ProactiveAuditor:
         self._findings.clear()
         self._findings_by_id.clear()
         return count
+
+    def scan_feature_interactions(
+        self,
+        feature_name: str,
+        project_root: str | Path,
+    ) -> list[Finding]:
+        """Scan a specific feature and its dependencies for contract violations.
+
+        Checks whether the feature's `produces` (Kafka events, API calls)
+        match what dependent features expect, verifies required patterns
+        in owning files, and ensures cross-service headers/contracts are met.
+
+        Args:
+            feature_name: Name of the feature to scan.
+            project_root: Path to the project root directory.
+
+        Returns:
+            List of findings from cross-feature scanning.
+        """
+        if self._feature_map is None or not self._feature_map.is_loaded():
+            logger.warning("Feature map not loaded — skipping feature interaction scan")
+            return []
+
+        feature = self._feature_map.get_feature(feature_name)
+        if feature is None:
+            logger.warning("Feature '%s' not found in feature map", feature_name)
+            return []
+
+        project_root = Path(project_root).resolve()
+        findings: list[Finding] = []
+
+        # 1. Check required patterns in owning files
+        findings.extend(_scan_required_patterns(feature, project_root))
+
+        # 2. Check producer/consumer alignment with dependents
+        dependents = self._feature_map.get_dependent_features(feature_name)
+        findings.extend(_scan_producer_consumer_alignment(feature, dependents))
+
+        # 3. Check that services listed in the feature actually exist on disk
+        findings.extend(_scan_service_existence(feature, project_root))
+
+        # Store findings
+        for f in findings:
+            self._findings.append(f)
+            self._findings_by_id[f.id] = f
+
+        if findings:
+            logger.info(
+                "Feature interaction scan for '%s': %d findings",
+                feature_name,
+                len(findings),
+            )
+        return findings
+
+    def scan_cross_feature(
+        self,
+        project_root: str | Path,
+    ) -> list[Finding]:
+        """Scan all feature interactions in the feature map.
+
+        Iterates over every feature and runs `scan_feature_interactions`
+        for each one.
+
+        Args:
+            project_root: Path to the project root directory.
+
+        Returns:
+            List of all findings across all features.
+        """
+        if self._feature_map is None or not self._feature_map.is_loaded():
+            logger.warning("Feature map not loaded — skipping cross-feature scan")
+            return []
+
+        project_root = Path(project_root).resolve()
+        all_findings: list[Finding] = []
+
+        for feature in self._feature_map.get_all_features():
+            findings = self.scan_feature_interactions(feature.name, project_root)
+            all_findings.extend(findings)
+
+        logger.info(
+            "Cross-feature scan complete: %d total findings across %d features",
+            len(all_findings),
+            len(self._feature_map.get_all_features()),
+        )
+        return all_findings
+
+
+# ---------------------------------------------------------------------------
+# Cross-feature scanning helpers
+# ---------------------------------------------------------------------------
+
+
+def _scan_required_patterns(
+    feature: Any,
+    project_root: Path,
+) -> list[Finding]:
+    """Check that required patterns are present in the feature's owning files.
+
+    For each required_pattern, scans the owning files to see if the pattern
+    text appears anywhere. If not, a finding is raised.
+    """
+    import fnmatch as _fnmatch
+
+    if not feature.required_patterns or not feature.owning_files:
+        return []
+
+    findings: list[Finding] = []
+
+    # Collect all files matching owning_files globs
+    owned_files: list[Path] = []
+    for glob_pattern in feature.owning_files:
+        # Convert glob to a rglob-friendly pattern
+        for file_path in project_root.rglob("*"):
+            if not file_path.is_file() or _should_skip(file_path):
+                continue
+            rel = str(file_path.relative_to(project_root)).replace("\\", "/")
+            if _fnmatch.fnmatch(rel, glob_pattern):
+                owned_files.append(file_path)
+
+    if not owned_files:
+        return findings
+
+    # Read all owned file contents (concatenated for pattern search)
+    combined_content = ""
+    for fp in owned_files[:100]:  # Cap to avoid scanning huge feature sets
+        content = _read_file_safe(fp)
+        if content:
+            combined_content += content + "\n"
+
+    for pattern_desc in feature.required_patterns:
+        # Use a simple substring search — the pattern is a human description,
+        # not a regex. Check for key terms in the description.
+        key_terms = [t.strip().lower() for t in pattern_desc.replace(",", " ").split() if len(t.strip()) > 3]
+        # If fewer than half the key terms appear in the codebase, flag it
+        matches = sum(1 for term in key_terms if term in combined_content.lower())
+        if key_terms and matches < len(key_terms) * 0.3:
+            findings.append(
+                Finding(
+                    id=str(uuid.uuid4())[:12],
+                    service=feature.services[0] if feature.services else "unknown",
+                    severity=Severity.WARNING,
+                    description=(
+                        f"Feature '{feature.name}' requires pattern: '{pattern_desc}' "
+                        f"but only {matches}/{len(key_terms)} key terms found in owning files."
+                    ),
+                    suggested_fix=(
+                        f"Review the owning files for feature '{feature.name}' and "
+                        f"ensure the required pattern is implemented: {pattern_desc}"
+                    ),
+                    contract_reference=(
+                        feature.related_contracts[0]
+                        if feature.related_contracts
+                        else "FEATURE_MAP.yaml — required_patterns"
+                    ),
+                )
+            )
+
+    return findings
+
+
+def _scan_producer_consumer_alignment(
+    feature: Any,
+    dependents: list[Any],
+) -> list[Finding]:
+    """Check that a feature's produces match what dependents expect.
+
+    If feature A produces "kafka:user.created" and feature B depends on A,
+    we check that B's own produces or required_patterns reference what A emits.
+    This is a heuristic — it flags potential misalignment.
+    """
+    if not feature.produces or not dependents:
+        return []
+
+    findings: list[Finding] = []
+
+    for dep in dependents:
+        # Extract topics/paths from the producer's `produces` list
+        for produced in feature.produces:
+            # Parse "kafka:topic.name" or "api:POST /path" format
+            parts = produced.split(":", 1)
+            if len(parts) != 2:
+                continue
+            protocol, resource = parts[0].strip(), parts[1].strip()
+
+            # Check if the dependent feature references this resource anywhere
+            dep_text = " ".join(dep.produces + dep.required_patterns + dep.owning_files).lower()
+
+            resource_lower = resource.lower()
+            # Extract the key identifier (topic name or path)
+            resource_key = resource_lower.split("/")[-1] if "/" in resource_lower else resource_lower
+
+            if resource_key and resource_key not in dep_text:
+                findings.append(
+                    Finding(
+                        id=str(uuid.uuid4())[:12],
+                        service=dep.services[0] if dep.services else "unknown",
+                        severity=Severity.INFO,
+                        description=(
+                            f"Feature '{dep.name}' depends on '{feature.name}' which "
+                            f"produces '{produced}', but '{dep.name}' does not appear "
+                            f"to reference '{resource_key}' in its configuration."
+                        ),
+                        suggested_fix=(
+                            f"Verify that feature '{dep.name}' correctly consumes or "
+                            f"handles the '{protocol}' resource '{resource}' produced "
+                            f"by '{feature.name}'."
+                        ),
+                        contract_reference="FEATURE_MAP.yaml — produces/depends_on alignment",
+                    )
+                )
+
+    return findings
+
+
+def _scan_service_existence(
+    feature: Any,
+    project_root: Path,
+) -> list[Finding]:
+    """Check that services listed in a feature actually exist on disk."""
+    findings: list[Finding] = []
+
+    for service in feature.services:
+        service_path = project_root / "services" / service
+        frontend_check = service == "frontend" and (project_root / "frontend").is_dir()
+
+        if not service_path.is_dir() and not frontend_check:
+            findings.append(
+                Finding(
+                    id=str(uuid.uuid4())[:12],
+                    service=service,
+                    severity=Severity.INFO,
+                    description=(
+                        f"Feature '{feature.name}' lists service '{service}' but "
+                        f"no directory found at services/{service}/"
+                    ),
+                    suggested_fix=(
+                        f"Either create the service directory or update FEATURE_MAP.yaml "
+                        f"to reflect the correct service path for '{feature.name}'."
+                    ),
+                    contract_reference="FEATURE_MAP.yaml — services",
+                )
+            )
+
+    return findings
 
 
 def _load_contracts_from_disk(contracts_dir: Path) -> dict[str, str]:
