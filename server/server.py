@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Enhanced Multi-AI MCP Server v5.0
-Always-On Agent System — Claude + Grok collaboration with:
+Enhanced Multi-AI MCP Server v6.0
+Intelligent Findings + Always-On Agents — Claude + Grok collaboration with:
 - RAG-based semantic memory retrieval (ChromaDB)
 - Parallel Grok calls for the 2-call review pattern
 - Persistent memory for Grok (with consolidation to prevent unbounded growth)
@@ -55,7 +55,15 @@ except ImportError:
     import watcher  # type: ignore[no-redef]
     import workflows  # type: ignore[no-redef]
 
-__version__ = "5.0.0"
+try:
+    from server import decision_learner, feature_map, finding_analyzer, finding_lifecycle
+except ImportError:
+    import decision_learner  # type: ignore[no-redef]
+    import feature_map  # type: ignore[no-redef]
+    import finding_analyzer  # type: ignore[no-redef]
+    import finding_lifecycle  # type: ignore[no-redef]
+
+__version__ = "6.0.0"
 
 # Load credentials
 CREDENTIALS_FILE = SCRIPT_DIR / "credentials.json"
@@ -152,6 +160,18 @@ try:
     # Don't auto-start — user starts via tool or config
 except Exception as _e:
     print(f"Control plane init skipped: {_e}", file=sys.stderr)
+
+# Initialize v6: Intelligent findings system (non-blocking, graceful fallback)
+_lifecycle_manager: Any = None
+try:
+    _lifecycle_manager = finding_lifecycle.get_lifecycle_manager()
+    _lifecycle_manager.initialize(MEMORY_BASE / "memory" / "findings.db")
+    if _control_plane:
+        _control_plane.set_lifecycle_manager(_lifecycle_manager)
+except Exception as _e:
+    print(f"Finding lifecycle init skipped: {_e}", file=sys.stderr)
+
+# decision_learner uses module-level state — no explicit init needed
 
 
 # ─── Core AI Call Function (Enhanced) ────────────────────────────────────────
@@ -946,6 +966,73 @@ def handle_tools_list(request_id: Any) -> dict[str, Any]:
                     },
                 },
             },
+            {
+                "name": "agent_load_feature_map",
+                "description": "Load a FEATURE_MAP.yaml to enable cross-feature monitoring. The feature map defines how features depend on each other and which services they span.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "yaml_path": {
+                            "type": "string",
+                            "description": "Path to FEATURE_MAP.yaml in the project root",
+                        },
+                    },
+                    "required": ["yaml_path"],
+                },
+            },
+            {
+                "name": "agent_analyze_findings",
+                "description": "Run AI analysis on pending audit findings. Adds approve/dismiss recommendations with confidence scores and reasoning.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "service": {
+                            "type": "string",
+                            "description": "Analyze findings for a specific service (optional — analyzes all if omitted)",
+                            "default": "",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "agent_finding_action",
+                "description": "Approve or dismiss a finding. Approved findings queue for sprint fixes. Dismissed findings record the reason for learning.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "finding_id": {"type": "string", "description": "The finding ID"},
+                        "action": {
+                            "type": "string",
+                            "description": "approve or dismiss",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "For dismiss: false_positive, test_code, docs_only, vendor_code, intentional, duplicate",
+                            "default": "",
+                        },
+                    },
+                    "required": ["finding_id", "action"],
+                },
+            },
+            {
+                "name": "agent_sprint_prompt",
+                "description": "Generate a sprint fix prompt for approved findings. Returns a ready-to-use prompt that Claude can execute to fix all approved audit findings.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "service": {
+                            "type": "string",
+                            "description": "Generate prompt for a specific service (optional)",
+                            "default": "",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "agent_findings_reminder",
+                "description": "Check if there are approved findings that need attention. Returns a reminder message if findings are pending.",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
         ]
     )
 
@@ -1019,6 +1106,16 @@ def _dispatch_tool(tool_name: str, arguments: dict[str, Any]) -> str:
         return _handle_agent_audit_findings(arguments)
     if tool_name == "agent_control_plane":
         return _handle_agent_control_plane(arguments)
+    if tool_name == "agent_load_feature_map":
+        return _handle_agent_load_feature_map(arguments)
+    if tool_name == "agent_analyze_findings":
+        return _handle_agent_analyze_findings(arguments)
+    if tool_name == "agent_finding_action":
+        return _handle_agent_finding_action(arguments)
+    if tool_name == "agent_sprint_prompt":
+        return _handle_agent_sprint_prompt(arguments)
+    if tool_name == "agent_findings_reminder":
+        return _handle_agent_findings_reminder(arguments)
 
     # ── Multi-AI tools ───────────────────────────────────────────────────
 
@@ -2066,6 +2163,109 @@ def _handle_agent_control_plane(arguments: dict[str, Any]) -> str:
         if _control_plane and _control_plane._server_thread is not None and _control_plane._server_thread.is_alive():
             return "Agent Monitor: RUNNING at http://localhost:3100/dashboard"
         return "Agent Monitor: NOT RUNNING. Use action='start' to launch."
+
+
+# ─── v6 Intelligent Findings Handlers ────────────────────────────────────────
+
+
+def _handle_agent_load_feature_map(arguments: dict[str, Any]) -> str:
+    yaml_path = arguments.get("yaml_path", "")
+    if not yaml_path:
+        return "Error: yaml_path is required"
+    path = Path(yaml_path)
+    if not path.exists():
+        return f"Error: {yaml_path} not found"
+    try:
+        fm = feature_map.load_map(path)
+        all_features = fm.get_all_features()
+        feature_names = [f.name for f in all_features]
+        _auditor.set_feature_map(fm)
+        return f"Feature map loaded: {len(feature_names)} features — {', '.join(feature_names)}"
+    except Exception as e:
+        return f"Error loading feature map: {e}"
+
+
+def _handle_agent_analyze_findings(arguments: dict[str, Any]) -> str:
+    service_filter = arguments.get("service", "")
+    findings = _auditor.get_findings()
+    if service_filter:
+        findings = [f for f in findings if f.get("service") == service_filter]
+    pending = [f for f in findings if f.get("status", "pending") == "pending"]
+    if not pending:
+        return "No pending findings to analyze."
+
+    fm = feature_map.get_map()
+
+    def ai_caller(prompt: str, _context: str = "") -> str:
+        sys_prompt = context_builder.build_system_prompt(tool_name="grok_code_review", project="")
+        return call_ai("grok", prompt, 0.3, system_prompt=sys_prompt, tool_name="agent_analyze_findings")
+
+    try:
+        analyzed = finding_analyzer.batch_analyze(pending, fm, ai_caller)
+        # Store in lifecycle manager if available
+        if _lifecycle_manager:
+            for f in analyzed:
+                _lifecycle_manager.add_finding(f)
+        count = len(analyzed)
+        approve_count = sum(1 for f in analyzed if f.get("ai_recommendation") == "approve")
+        dismiss_count = count - approve_count
+        return (
+            f"Analyzed {count} findings. AI recommends: {approve_count} approve, {dismiss_count} dismiss.\n"
+            "View details in the dashboard at http://127.0.0.1:3100/dashboard or use agent_audit_findings."
+        )
+    except Exception as e:
+        return f"Analysis error: {e}"
+
+
+def _handle_agent_finding_action(arguments: dict[str, Any]) -> str:
+    finding_id = arguments.get("finding_id", "")
+    action = arguments.get("action", "")
+    reason = arguments.get("reason", "")
+
+    if not finding_id or not action:
+        return "Error: finding_id and action are required"
+
+    if _lifecycle_manager is None:
+        return "Error: Finding lifecycle manager not initialized"
+
+    try:
+        if action == "approve":
+            _lifecycle_manager.approve(finding_id)
+            decision_learner.record_decision({"id": finding_id}, action="approve")
+            return f"Finding {finding_id} approved. It will be included in the next sprint fix batch."
+        elif action == "dismiss":
+            dismiss_reason = reason or "intentional"
+            _lifecycle_manager.dismiss(finding_id, dismiss_reason)
+            decision_learner.record_decision({"id": finding_id}, action="dismiss", reason=dismiss_reason)
+            return f"Finding {finding_id} dismissed (reason: {dismiss_reason}). Decision recorded for learning."
+        else:
+            return f"Error: Unknown action '{action}'. Use 'approve' or 'dismiss'."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def _handle_agent_sprint_prompt(arguments: dict[str, Any]) -> str:
+    service = arguments.get("service", "")
+    if _lifecycle_manager is None:
+        return "Error: Finding lifecycle manager not initialized"
+    try:
+        prompt = _lifecycle_manager.get_sprint_prompt(service=service)
+        if not prompt:
+            return "No approved findings to fix."
+        return prompt
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def _handle_agent_findings_reminder(arguments: dict[str, Any]) -> str:
+    if _lifecycle_manager is None:
+        return "No findings system initialized."
+    try:
+        if _lifecycle_manager.should_remind():
+            return _lifecycle_manager.get_reminder_message()
+        return "No findings need attention right now."
+    except Exception as e:
+        return f"Error: {e}"
 
 
 # ─── Main Server Loop ───────────────────────────────────────────────────────

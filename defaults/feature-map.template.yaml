@@ -1,0 +1,19 @@
+# Feature Map — defines feature dependencies and interactions
+# Used by the always-on agent to monitor cross-feature integrity
+#
+# Edit this file when adding new features or changing how features interact.
+# The agent will validate code changes against this map.
+
+features:
+  # Example:
+  # user_auth:
+  #   services: [auth-service, frontend]
+  #   owning_files: ["auth-service/src/**", "frontend/src/auth/**"]
+  #   depends_on: []
+  #   produces:
+  #     - "api:POST /auth/login"
+  #     - "kafka:user.logged_in"
+  #   required_patterns:
+  #     - "JWT token validation on all protected endpoints"
+  #   related_contracts: ["contracts/apis/auth-service.md"]
+  #   blast_radius: high
