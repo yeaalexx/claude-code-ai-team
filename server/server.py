@@ -2108,11 +2108,32 @@ def _handle_agent_audit_scan(arguments: dict[str, Any]) -> str:
         if not service_path.exists():
             return f"Error: service directory not found: {service_path}"
         findings = _auditor.scan_service(service, service_path)
+    else:
+        findings = _auditor.scan_all(str(root), str(contracts_path))
+
+    # Sync findings to lifecycle manager so dashboard can display them
+    if _lifecycle_manager and findings:
+        for f in findings:
+            _lifecycle_manager.add_finding(
+                f.to_dict()
+                if hasattr(f, "to_dict")
+                else {
+                    "id": f.id,
+                    "service": f.service,
+                    "severity": f.severity,
+                    "description": f.description,
+                    "file": getattr(f, "file", ""),
+                    "line": getattr(f, "line", 0),
+                    "status": "detected",
+                    "contract_ref": getattr(f, "contract_ref", ""),
+                }
+            )
+
+    if service:
         return f"Scanned {service}: {len(findings)} findings\n" + "\n".join(
             f"  [{f.severity}] {f.description}" for f in findings
         )
     else:
-        findings = _auditor.scan_all(str(root), str(contracts_path))
         return f"Scanned all services: {len(findings)} findings\n" + "\n".join(
             f"  [{f.severity}] [{f.service}] {f.description}" for f in findings
         )
