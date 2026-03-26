@@ -2114,20 +2114,21 @@ def _handle_agent_audit_scan(arguments: dict[str, Any]) -> str:
     # Sync findings to lifecycle manager so dashboard can display them
     if _lifecycle_manager and findings:
         for f in findings:
-            _lifecycle_manager.add_finding(
-                f.to_dict()
-                if hasattr(f, "to_dict")
-                else {
+            if hasattr(f, "to_dict"):
+                fd = f.to_dict()
+            else:
+                fd = {
                     "id": f.id,
                     "service": f.service,
                     "severity": f.severity,
                     "description": f.description,
                     "file": getattr(f, "file", ""),
                     "line": getattr(f, "line", 0),
-                    "status": "detected",
                     "contract_ref": getattr(f, "contract_ref", ""),
                 }
-            )
+            # Auditor uses "pending", lifecycle uses "detected" — normalize
+            fd["status"] = "detected"
+            _lifecycle_manager.add_finding(fd)
 
     if service:
         return f"Scanned {service}: {len(findings)} findings\n" + "\n".join(
