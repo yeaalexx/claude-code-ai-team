@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "description": "Default threshold rules for grok_auto_review. Override per-project via ai-team-thresholds.json in the project root.",
+  "thresholds": {
+    "frontend_file_count": 8,
+    "total_file_count": 12,
+    "skip_below_file_count": 5
+  },
+  "sensitive_patterns": [
+    "auth", "tenant", "branding", "routing", "nginx",
+    "permission", "rbac", "acl", "session", "token",
+    "middleware", "guard", "interceptor"
+  ],
+  "deploy_patterns": [
+    "docker-compose", "Dockerfile", ".tf", "terraform",
+    "helm", "k8s", "kubernetes", ".yml", ".yaml"
+  ],
+  "integration_patterns": [
+    "controller", "router", "middleware", "gateway",
+    "proxy", "handler", "endpoint", "api"
+  ],
+  "frontend_extensions": [
+    ".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".less"
+  ],
+  "excluded_paths": [
+    "node_modules/", "dist/", "build/", ".git/",
+    "coverage/", "__pycache__/", ".next/", "vendor/"
+  ],
+  "review_types": {
+    "full": {
+      "description": "Full 2-call review: quality+integration and compliance+knowledge",
+      "calls": 2
+    },
+    "deploy": {
+      "description": "Deploy parity review: infrastructure and environment consistency",
+      "calls": 2
+    },
+    "integration": {
+      "description": "Integration review: API contracts, header propagation, service boundaries",
+      "calls": 1
+    }
+  }
+}

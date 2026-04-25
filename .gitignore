@@ -1,0 +1,28 @@
+# Credentials (never commit API keys)
+credentials.json
+
+# Build/generator scripts (setup.sh is the source of truth, not the generator)
+write_setup.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Node
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

@@ -1,0 +1,13 @@
+# Python dependencies for the multi-ai-collab MCP server.
+# Installed into an isolated venv at ~/.claude-mcp-servers/multi-ai-collab/.venv/
+# Pin exact versions for reproducibility and supply-chain safety.
+# To upgrade: update versions here, test, then commit.
+google-generativeai==0.8.6
+openai==1.109.1
+python-dotenv==1.0.1
+chromadb==0.6.3
+httpx==0.28.1
+fastapi==0.115.12
+uvicorn==0.34.2
+watchdog==6.0.0
+pyyaml==6.0.2

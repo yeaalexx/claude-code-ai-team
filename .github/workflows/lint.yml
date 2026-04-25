@@ -1,0 +1,9 @@
+# DEPRECATED: Replaced by ci.yml — this file can be deleted.
+# Keeping as empty to avoid GitHub referencing a missing workflow.
+name: "Legacy Lint (see ci.yml)"
+on: workflow_dispatch
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "This workflow is deprecated. See ci.yml."
